@@ -121,6 +121,52 @@ def sequence_load_balancing_loss_func(
     return seq_aux_loss
 
 
+def global_batch_load_balancing_loss_func(
+    probs: torch.Tensor,
+    routing_map: torch.Tensor,
+    moe_aux_loss_coeff: float,
+    sequence_partition_group=None,
+):
+    """
+    Calculate the auxiliary loss in global-batch level.
+    Refer to https://arxiv.org/abs/2501.11873 for details.
+
+    Args:
+        probs (torch.Tensor): Softmax probabilities output by the router for each token.
+                              Shape in [num_tokens, num_experts].
+        routing_map (torch.Tensor): Mapping of tokens to experts assignment.
+                                    Shape in [num_tokens, num_experts].
+        moe_aux_loss_coeff (float): Scaling coefficient for the auxiliary loss.
+        sequence_partition_group (optional): The parallel group over which the sequence is
+                                             partitioned. If None, no partitioning is applied.
+                                             Defaults to None.
+
+    Returns:
+        torch.Tensor: The sequence auxiliary loss for load balancing.
+    """
+    routing_prob = probs.mean(0)
+
+    routing_count = routing_map.int().sum(0)
+    torch.distributed.nn.all_reduce(routing_count, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_data_parallel_group())
+
+    # If the sequence is partitioned by certain parallelism strategies like Sequence Parallelism
+    # or Context Parallelism, compute the gradient of the auxiliary loss with respect to the full
+    # sequence.
+    if sequence_partition_group is not None:
+        routing_prob /= sequence_partition_group.size()
+        routing_prob_count = torch.stack([routing_prob, routing_count])
+        torch.distributed.nn.all_reduce(routing_prob_count, op=torch.distributed.ReduceOp.SUM, group=sequence_partition_group)
+        routing_prob, routing_count = routing_prob_count[0], routing_prob_count[1]
+
+    routing_freq = routing_count / routing_count.sum()
+
+    num_experts = probs.shape[-1]
+    global_batch_aux_loss = num_experts * (routing_freq * routing_prob).sum()
+    global_batch_aux_loss *= moe_aux_loss_coeff
+
+    return global_batch_aux_loss
+
+
 def z_loss_func(logits, z_loss_coeff):
     """Encourages the router's logits to remain small to enhance stability.
     Please refer to the ST-MoE paper (https://arxiv.org/pdf/2202.08906.pdf) for details.

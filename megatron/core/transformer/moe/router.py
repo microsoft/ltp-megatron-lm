@@ -13,6 +13,7 @@ from megatron.core.transformer.moe.moe_utils import (
     MoEAuxLossAutoScaler,
     save_to_aux_losses_tracker,
     sequence_load_balancing_loss_func,
+    global_batch_load_balancing_loss_func,
     sinkhorn,
     switch_load_balancing_loss_func,
     topk_softmax_with_capacity,
@@ -277,6 +278,46 @@ class TopKRouter(Router):
 
         return probs, routing_map
 
+    def global_batch_loss_load_balancing(self, logits: torch.Tensor):
+        """Apply global-batch-loss-based load balancing to the logits tensor.
+
+        Args:
+            logits (torch.Tensor): The logits tensor after gating, shape: [num_tokens, num_experts].
+
+        Returns:
+            probs (torch.Tensor): The probabilities of token to experts assignment.
+            routing_map (torch.Tensor): The mask of token to experts assignment.
+        """
+
+        probs, routing_map, tokens_per_expert = topk_softmax_with_capacity(
+            logits,
+            self.topk,
+            capacity_factor=self.config.moe_expert_capacity_factor,
+            pad_to_capacity=self.config.moe_pad_expert_input_to_capacity,
+            drop_policy=self.config.moe_token_drop_policy,
+            use_pre_softmax=self.config.moe_router_pre_softmax,
+            num_groups=self.config.moe_router_num_groups,
+            group_topk=self.config.moe_router_group_topk,
+            scaling_factor=self.config.moe_router_topk_scaling_factor,
+            deterministic_mode=self.config.deterministic_mode,
+            score_function=self.score_function,
+            expert_bias=self.expert_bias,
+        )
+
+        if self.training and torch.is_grad_enabled():
+            # Apply sequence-auxiliary load balancing loss
+            scores = self.compute_routing_scores_for_aux_loss(logits)
+            aux_loss_func = partial(
+                global_batch_load_balancing_loss_func,
+                probs=scores,
+                routing_map=routing_map,
+            )
+            probs = self.apply_load_balancing_loss(
+                activation=probs, load_balancing_loss_func=aux_loss_func
+            )
+
+        return probs, routing_map
+
     def apply_load_balancing_loss(
         self, activation: torch.Tensor, load_balancing_loss_func: Callable
     ):
@@ -396,6 +437,8 @@ class TopKRouter(Router):
             scores, routing_map = self.aux_loss_load_balancing(logits)
         elif self.routing_type == "seq_aux_loss":
             scores, routing_map = self.seq_aux_loss_load_balancing(logits, bsz, seq_length)
+        elif self.routing_type == "global_batch_loss":
+            scores, routing_map = self.global_batch_loss_load_balancing(logits)
         elif self.routing_type == "none":
             # A naive top-k routing without load balancing
             scores, routing_map, _ = topk_softmax_with_capacity(
