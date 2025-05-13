@@ -1195,6 +1195,10 @@ def setup_model_and_optimizer(model_provider_func,
                         preprocess_common_state_dict_fn=preprocess_common_state_dict)
 
         print_rank_0("> converted checkpoint: %s -> %s." % (load_ckpt_format, args.ckpt_format))
+        ft_integration.on_checkpointing_start()
+        maybe_finalize_async_save(blocking=True, terminate=True)
+        ft_integration.on_checkpointing_end(is_async_finalization=True)
+        ft_integration.shutdown()
         torch.distributed.barrier()
         exit()
 
