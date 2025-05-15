@@ -1993,6 +1993,9 @@ def _add_checkpointing_args(parser):
                             ' Check StrictHandling docs for flags meaning.'
                             ' NOTE: This flag controls only distributed checkpoint'
                             ' load from storage, not loading state dict into the model.')
+    group.add_argument('--infer-rampup-batch-size', action='store_true',
+                       help='Infer rampup batch size from checkpoint, cannot '
+                       'set rampup batch size at the same time.')
     group.add_argument('--ckpt-upload-blob-path', type=str, default=None,
                        help='Azure blob path for checkpoint upload, do not include checkpoint name.')
     group.add_argument('--ckpt-upload-blob-sas-path', type=str, default=None,
@@ -2328,6 +2331,11 @@ def _add_data_args(parser):
                        help='Number of parallel threads per rank for dataset builder')
     group.add_argument('--s3-cache-path', type=str, default=None,
                        help='Path to cache index files when using s3 dataloader')
+    group.add_argument('--dataset-reset-key', type=str, default='',
+                       help='Reset key for the dataset, change this key for '
+                       'new dataset to reset indecies in dataloader.')
+    group.add_argument('--dataset-offset', type=int, default=0,
+                       help='Index offset to previous datasets in dataloader.')
     group.add_argument('--scale-shuffle', action='store_true',
                        help='Whether to enable scale-shuffle at lowest-level datasets.')
     return parser
