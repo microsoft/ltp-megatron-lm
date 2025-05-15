@@ -27,6 +27,7 @@ from megatron.core.utils import is_te_min_version
 from megatron.core.fp8_utils import is_float8tensor
 from megatron.core.rerun_state_machine import get_rerun_state_machine
 from .async_utils import schedule_async_save, is_empty_async_queue
+from .ckpt_utils import CkptUploadQueue
 from .global_vars import get_args, get_one_logger
 from .utils import unwrap_model, print_rank_0, append_to_progress_log, is_last_rank
 from ..core.dist_checkpointing.serialization import \
@@ -574,6 +575,16 @@ def save_checkpoint(iteration, model, optimizer, opt_param_scheduler, num_floati
     logger.debug(f"rank: {rank}, takes {end_misc - start_misc} to finalize ckpt save ")
 
     ft_integration.on_checkpointing_end(is_async_finalization=False)
+
+    if args.local_rank == 0 and \
+        (not torch.distributed.is_initialized() or mpu.get_expert_data_parallel_rank() == 0 or ckpt_type != CheckpointType.LEGACY) and \
+        (not args.async_save):
+        if args.ckpt_upload_blob_path and args.ckpt_upload_blob_sas_path:
+            iter_dir = os.path.basename(get_checkpoint_name(save_dir, iteration, return_base_dir=True))
+            CkptUploadQueue().add_upload_task([iter_dir])
+        else:
+            print("Skip checkpoint upload due to missed blob path or SAS token")
+
 
 def cleanup_old_non_persistent_checkpoint(save_dir, leave_ckpt_num=1, do_async=False):
     if torch.distributed.is_initialized() and torch.distributed.get_rank() != 0:
