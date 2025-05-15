@@ -94,7 +94,7 @@ class LanguageModule(MegatronModule):
                     logits, labels, parallel_state.get_tensor_model_parallel_group()
                 )
         else:
-            loss = tensor_parallel.vocab_parallel_cross_entropy(logits, labels)
+            loss = tensor_parallel.vocab_parallel_cross_entropy(logits, labels, label_smoothing=self.config.cross_entropy_label_smoothing)
 
         # [s b] => [b, s]
         loss = loss.transpose(0, 1).contiguous()
