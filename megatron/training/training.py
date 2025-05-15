@@ -46,7 +46,7 @@ except ImportError:
 
 from megatron.core.distributed import finalize_model_grads
 from megatron.core.enums import ModelType
-from megatron.core.optimizer import get_megatron_optimizer, OptimizerConfig
+from megatron.core.optimizer import get_megatron_optimizer, OptimizerConfig, ChainedOptimizer, _update_min_and_max_lr_in_param_groups
 from megatron.core.rerun_state_machine import (
     get_rerun_state_machine,
     destroy_rerun_state_machine,
@@ -1182,6 +1182,21 @@ def setup_model_and_optimizer(model_provider_func,
         unwrapped_model[0].init_state_dict_from_bert()
         if args.fp16:
             optimizer.reload_model_params()
+
+    # Call below again so that the load checkpoint values are overridden again by the input values
+    # https://github.com/NVIDIA/Megatron-LM/issues/1138#issuecomment-2459920646
+    if args.override_opt_param_scheduler:
+        print_rank_0("Overriding optimizer from checkpoint")
+        print_rank_0(f"Checkpoint optimizer type: {type(optimizer)}")
+        opt_list = optimizer.chained_optimizers if isinstance(optimizer, ChainedOptimizer) else [optimizer]
+        for opt in opt_list:
+            opt.param_groups = _update_min_and_max_lr_in_param_groups(
+                opt.param_groups,
+                lr=config.lr,
+                min_lr=config.min_lr,
+                decoupled_lr=config.decoupled_lr,
+                decoupled_min_lr=config.decoupled_min_lr,
+            )
 
     # Convert checkpoint format.
     if args.ckpt_convert_format is not None:
