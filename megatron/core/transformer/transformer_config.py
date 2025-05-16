@@ -43,6 +43,18 @@ class TransformerConfig(ModelParallelConfig):
     """Number of transformer layers on last pipeline stage.
     None implies equal layer division across PP ranks."""
 
+    num_layers_split_in_first_pipeline_stage: Optional[list] = None
+    """List of transformer layers split on first pipeline stage,
+    when num_layers_in_first_pipeline_stage is not divisible by
+    virtual_pipeline_model_parallel_size.
+    None implies equal layer division ont first pipeline stage."""
+
+    num_layers_split_in_last_pipeline_stage: Optional[list] = None
+    """List of transformer layers split on last pipeline stage,
+    when num_layers_in_last_pipeline_stage is not divisible by
+    virtual_pipeline_model_parallel_size.
+    None implies equal layer division ont last pipeline stage."""
+
     account_for_embedding_in_pipeline_split: bool = False
     """If set, the embedding layer will be treated as a standard transformer
     layer in the context of partition and placement for pipeline parallelism."""
@@ -543,6 +555,19 @@ class TransformerConfig(ModelParallelConfig):
     heterogeneous_block_specs: bool = False
     """Whether to use heterogeneous block specs (nemotron-nas architecture)."""
 
+    def split_pipeline_stage(self, stage, num_layers, vp_size):
+        quotient = num_layers // vp_size
+        residue = num_layers % vp_size
+        num_layers_split = [
+            quotient + 1 if i < residue else quotient for i in range(vp_size)
+        ]
+        print(
+            f'number of layers at the {stage} stage {num_layers} '
+            f'is not divisible by virtual pipeline parallel degree {vp_size}, '
+            f'thus splitting the {stage} stage as {num_layers_split}'
+        )
+        return num_layers_split    
+
     def __post_init__(self):
         """Python dataclass method that is used to modify attributes after initialization.
         See https://docs.python.org/3/library/dataclasses.html#post-init-processing for more
@@ -795,12 +820,12 @@ class TransformerConfig(ModelParallelConfig):
                         % self.virtual_pipeline_model_parallel_size
                         != 0
                     ):
-                        raise ValueError(
-                            f'number of layers at first stage: '
-                            f'{self.num_layers_in_first_pipeline_stage}'
-                            f'must be divisible by virtual pipeline'
-                            f'parallel degree {self.virtual_pipeline_model_parallel_size}'
-                        )
+                        self.num_layers_split_in_first_pipeline_stage = \
+                            self.split_pipeline_stage(
+                                'first',
+                                self.num_layers_in_first_pipeline_stage,
+                                self.virtual_pipeline_model_parallel_size
+                            )
                 num_layers -= self.num_layers_in_first_pipeline_stage
                 pipeline_parallel_size -= 1
 
@@ -814,12 +839,12 @@ class TransformerConfig(ModelParallelConfig):
                         % self.virtual_pipeline_model_parallel_size
                         != 0
                     ):
-                        raise ValueError(
-                            f'number of layers at last stage: '
-                            f'{self.num_layers_in_last_pipeline_stage}'
-                            f'must be divisible by virtual pipeline'
-                            f'parallel degree {self.virtual_pipeline_model_parallel_size}'
-                        )
+                        self.num_layers_split_in_last_pipeline_stage = \
+                            self.split_pipeline_stage(
+                                'last',
+                                self.num_layers_in_last_pipeline_stage,
+                                self.virtual_pipeline_model_parallel_size
+                            )
                 num_layers -= self.num_layers_in_last_pipeline_stage
                 pipeline_parallel_size -= 1
 
