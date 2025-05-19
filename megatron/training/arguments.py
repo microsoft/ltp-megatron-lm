@@ -1819,6 +1819,8 @@ def _add_initialization_args(parser):
                        'distribution used for weight initialization.')
     group.add_argument('--init-method-xavier-uniform', action='store_true',
                        help='Enable Xavier uniform parameter initialization')
+    group.add_argument('--use-init-method-for-output-layer', action='store_true',
+                       help='Use the specified init method for output layer.')
 
     return parser
 
