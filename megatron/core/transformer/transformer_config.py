@@ -47,13 +47,13 @@ class TransformerConfig(ModelParallelConfig):
     """List of transformer layers split on first pipeline stage,
     when num_layers_in_first_pipeline_stage is not divisible by
     virtual_pipeline_model_parallel_size.
-    None implies equal layer division ont first pipeline stage."""
+    None implies equal layer division on first pipeline stage."""
 
     num_layers_split_in_last_pipeline_stage: Optional[list] = None
     """List of transformer layers split on last pipeline stage,
     when num_layers_in_last_pipeline_stage is not divisible by
     virtual_pipeline_model_parallel_size.
-    None implies equal layer division ont last pipeline stage."""
+    None implies equal layer division on last pipeline stage."""
 
     account_for_embedding_in_pipeline_split: bool = False
     """If set, the embedding layer will be treated as a standard transformer
