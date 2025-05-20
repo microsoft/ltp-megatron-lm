@@ -2253,6 +2253,8 @@ def _add_tokenizer_args(parser):
                        help='Number of special tokens in tiktoken tokenizer')
     group.add_argument('--tiktoken-special-tokens', type=str, nargs='+', default=None,
                        help='List of tiktoken special tokens, needs to have ["<unk>", "<s>", "</s>"]')
+    group.add_argument('--tokenizer-huggingface-trust-remote-code', action='store_true',
+                       help='Set trust_remote_code=True for HuggingFace tokenizer.')
     return parser
 
 
