@@ -2004,6 +2004,8 @@ def _add_checkpointing_args(parser):
                        help='Path to the file which contains Azure blob SAS token for checkpoint upload.')
     group.add_argument('--ckpt-upload-blob-concurrency', type=str, default='AUTO',
                        help='Number of concurrent requests that can occur during Azure blob upload.')
+    group.add_argument('--ckpt-isolated-save', action='store_true',
+                       help='Whether the checkpoints need to be saved to multiple isolated places.')
     return parser
 
 
