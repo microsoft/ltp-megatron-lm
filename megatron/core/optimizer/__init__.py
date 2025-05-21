@@ -26,6 +26,9 @@ except ImportError:
 
 from megatron.core import mpu
 from megatron.core.optimizer.cpu_offloading.hybrid_optimizer import HybridDeviceOptimizer
+from megatron.core.transformer.transformer_layer import get_transformer_layer_offset
+from megatron.training import get_args
+from megatron.training.arguments import core_transformer_config_from_args
 
 from ..distributed.param_and_grad_buffer import _ParamAndGradBuffer
 from ..transformer.module import MegatronModule
@@ -82,6 +85,11 @@ def _get_param_groups(
 
     # Map (wd_mult, lr_mult, is_expert_parallel, is_decoupled_lr) to params.
     params_map = {}
+    args = get_args()
+    if args.log_grad_norm_per_layer:
+        params_global_layer_id_map = {}
+        transformer_config = core_transformer_config_from_args(args)
+        global_layer_offset = get_transformer_layer_offset(transformer_config)
     for model_chunk in model_chunks:
         ddp_config = model_chunk.ddp_config
         if ddp_config.use_custom_fsdp:
@@ -141,6 +149,21 @@ def _get_param_groups(
             else:
                 params_map[key].append(param)
 
+            if args.log_grad_norm_per_layer:
+                def get_local_layer_id_from_param_name(param_name):
+                    param_name_segments = param_name.split('.')
+                    for idx, param_name_segment in enumerate(param_name_segments):
+                        if param_name_segment == 'layers':
+                            return int(param_name_segments[idx + 1])
+                if 'layers' in name:
+                    local_layer_id = get_local_layer_id_from_param_name(name)
+                    global_layer_id = global_layer_offset + local_layer_id
+                else:
+                    global_layer_id = name
+                if key not in params_global_layer_id_map:
+                    params_global_layer_id_map[key] = []
+                params_global_layer_id_map[key].append(global_layer_id)
+
     param_groups = []
     for (wd_mult, _lr_mult, is_expert_parallel, is_decoupled_lr), params in params_map.items():
         assert len(params) > 0
@@ -151,6 +174,9 @@ def _get_param_groups(
             'is_expert_parallel': is_expert_parallel,
             'is_decoupled_lr': is_decoupled_lr,
         }
+        if args.log_grad_norm_per_layer:
+            param_group['global_layer_ids'] = \
+                params_global_layer_id_map[(wd_mult, _lr_mult, is_expert_parallel, is_decoupled_lr)]
         param_groups.append(param_group)
 
     param_groups = _update_min_and_max_lr_in_param_groups(

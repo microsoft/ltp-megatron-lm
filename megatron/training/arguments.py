@@ -1403,6 +1403,12 @@ def _add_logging_args(parser):
                        help='If set, log progress (in terms of number of processed tokens and '
                        'number of floating-point operations) to progress.txt file in checkpoint '
                        'directory.')
+    group.add_argument('--log-grad-norm-per-layer', action='store_true',
+                       help='If set, calculate and log per-layer gradient norm.')
+    group.add_argument('--log-grad-norm-per-layer-extra-patterns',
+                       nargs='+', type=str, default=[],
+                       help='For per-layer gradient norm logging, naming patterns of extra weights '
+                       'that don\'t belong to any layer.')
     group.add_argument('--timing-log-level', type=int,
                        default=0, choices=range(0,3),
                        help='Granularity level to measure and report timing. '
