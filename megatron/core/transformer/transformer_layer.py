@@ -104,19 +104,21 @@ def get_transformer_layer_offset(config: TransformerConfig):
                     config.num_layers_split_in_first_pipeline_stage is not None
                     or config.num_layers_split_in_last_pipeline_stage is not None
                 ):
-                    first_stage_split = [
-                        num_layers_per_virtual_model_chunk_in_first_pipeline_stage
-                        for _ in range(vp_size)
-                    ]
                     if config.num_layers_split_in_first_pipeline_stage is not None:
                         first_stage_split = config.num_layers_split_in_first_pipeline_stage
+                    else:
+                        first_stage_split = [
+                            num_layers_per_virtual_model_chunk_in_first_pipeline_stage
+                            for _ in range(vp_size)
+                        ]
 
-                    last_stage_split = [
-                        num_layers_per_virtual_model_chunk_in_last_pipeline_stage
-                        for _ in range(vp_size)
-                    ]
                     if config.num_layers_split_in_last_pipeline_stage is not None:
-                        last_stage_split = config.num_layers_split_in_last_pipeline_stage        
+                        last_stage_split = config.num_layers_split_in_last_pipeline_stage
+                    else:
+                        last_stage_split = [
+                            num_layers_per_virtual_model_chunk_in_last_pipeline_stage
+                            for _ in range(vp_size)
+                        ]
 
                     middle_chunk_layers = (
                         num_layers_per_vritual_model_chunk_in_middle_pipeline_stage
@@ -125,18 +127,18 @@ def get_transformer_layer_offset(config: TransformerConfig):
 
                     pipeline_size = parallel_state.get_pipeline_model_parallel_world_size()
                     offset = 0
-                    for i in range(vp_rank):
-                        for j in range(pipeline_size):
-                            if j == 0:
-                                offset += first_stage_split[i]
-                            elif j == pipeline_size - 1:
-                                offset += last_stage_split[i]
+                    for vp_idx in range(vp_rank):
+                        for pp_idx in range(pipeline_size):
+                            if pp_idx == 0:
+                                offset += first_stage_split[vp_idx]
+                            elif pp_idx == pipeline_size - 1:
+                                offset += last_stage_split[vp_idx]
                             else:
                                 offset += middle_chunk_layers
-                    for k in range(pipeline_rank):
-                        if k == 0:
+                    for pp_idx in range(pipeline_rank):
+                        if pp_idx == 0:
                             offset += first_stage_split[vp_rank]
-                        elif k == pipeline_size - 1:
+                        elif pp_idx == pipeline_size - 1:
                             offset += last_stage_split[vp_rank]
                         else:
                             offset += middle_chunk_layers

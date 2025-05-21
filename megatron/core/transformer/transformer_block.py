@@ -138,13 +138,13 @@ def get_num_layers_to_build(config: TransformerConfig) -> int:
             config.num_layers_split_in_first_pipeline_stage is not None
             and parallel_state.is_pipeline_first_stage(ignore_virtual=True)
         ):
-            num_layers_per_virtual_rank = \
+            num_layers_to_build = \
                 config.num_layers_split_in_first_pipeline_stage[vp_rank]
         elif (
             config.num_layers_split_in_last_pipeline_stage is not None
             and parallel_state.is_pipeline_last_stage(ignore_virtual=True)
         ):
-            num_layers_per_virtual_rank = \
+            num_layers_to_build = \
                 config.num_layers_split_in_last_pipeline_stage[vp_rank]
         else:
             assert (
@@ -152,9 +152,7 @@ def get_num_layers_to_build(config: TransformerConfig) -> int:
             ), f"num_layers_per_pipeline_rank {num_layers_per_pipeline_rank} \
                 should be divisible by vp_size {vp_size}"
             num_layers_per_virtual_rank = num_layers_per_pipeline_rank // vp_size
-
-        num_layers_to_build = num_layers_per_virtual_rank
-
+            num_layers_to_build = num_layers_per_virtual_rank
     else:
         # Non-interleaved pipeline parallelism:
         # Each stage gets a contiguous set of layers.

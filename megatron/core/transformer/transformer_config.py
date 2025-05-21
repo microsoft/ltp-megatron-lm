@@ -552,17 +552,46 @@ class TransformerConfig(ModelParallelConfig):
     mamba_num_groups: int = 8
     """The number of groups used in Mamba layers."""
 
+    def is_split_valid(self, stage, layers_split, num_layers, vp_size):
+        if not isinstance(layers_split, list):
+            raise ValueError(
+                f'decoder_{stage}_pipeline_num_layers_split={layers_split} '
+                f'should be a list'
+            )
+        if len(layers_split) != vp_size:
+            raise ValueError(
+                f'the size of the list decoder_{stage}_pipeline_num_'
+                f'layers_split={layers_split} should be equal to '
+                f'virtual_pipeline_model_parallel_size={vp_size}'
+            )
+        if not all(x > 0 for x in layers_split):
+            raise ValueError(
+                f'layer numbers in decoder_{stage}_pipeline_num_layers_split='
+                f'{layers_split} should all be larger than 0'
+            )
+        if sum(layers_split) != num_layers:
+            raise ValueError(
+                f'the sum of decoder_{stage}_pipeline_num_'
+                f'layers_split={layers_split} should be equal to '
+                f'decoder_{stage}_pipeline_num_layers={num_layers}'
+            )
+        print(
+            f'the virtual pipeline split of the {stage} pipeline '
+            f'stage is provided by user: {layers_split}'
+        )
+        return True
+
     heterogeneous_block_specs: bool = False
     """Whether to use heterogeneous block specs (nemotron-nas architecture)."""
 
     def split_pipeline_stage(self, stage, num_layers, vp_size):
         quotient = num_layers // vp_size
-        residue = num_layers % vp_size
+        remainder = num_layers % vp_size
         num_layers_split = [
-            quotient + 1 if i < residue else quotient for i in range(vp_size)
+            quotient + 1 if i < remainder else quotient for i in range(vp_size)
         ]
         print(
-            f'number of layers at the {stage} stage {num_layers} '
+            f'number of layers at the {stage} pipeline stage {num_layers} '
             f'is not divisible by virtual pipeline parallel degree {vp_size}, '
             f'thus splitting the {stage} stage as {num_layers_split}'
         )
@@ -820,12 +849,24 @@ class TransformerConfig(ModelParallelConfig):
                         % self.virtual_pipeline_model_parallel_size
                         != 0
                     ):
-                        self.num_layers_split_in_first_pipeline_stage = \
-                            self.split_pipeline_stage(
+                        if self.num_layers_split_in_first_pipeline_stage is not None:
+                            if not self.is_split_valid(
                                 'first',
+                                self.num_layers_split_in_first_pipeline_stage,
                                 self.num_layers_in_first_pipeline_stage,
                                 self.virtual_pipeline_model_parallel_size
-                            )
+                            ):
+                                raise ValueError(
+                                    f'Invalid decoder_first_pipeline_num_layers_split: '
+                                    f'{self.num_layers_split_in_first_pipeline_stage}'
+                                )
+                        else:
+                            self.num_layers_split_in_first_pipeline_stage = \
+                                self.split_pipeline_stage(
+                                    'first',
+                                    self.num_layers_in_first_pipeline_stage,
+                                    self.virtual_pipeline_model_parallel_size
+                                )
                 num_layers -= self.num_layers_in_first_pipeline_stage
                 pipeline_parallel_size -= 1
 
@@ -839,12 +880,24 @@ class TransformerConfig(ModelParallelConfig):
                         % self.virtual_pipeline_model_parallel_size
                         != 0
                     ):
-                        self.num_layers_split_in_last_pipeline_stage = \
-                            self.split_pipeline_stage(
+                        if self.num_layers_split_in_last_pipeline_stage is not None:
+                            if not self.is_split_valid(
                                 'last',
+                                self.num_layers_split_in_last_pipeline_stage,
                                 self.num_layers_in_last_pipeline_stage,
                                 self.virtual_pipeline_model_parallel_size
-                            )
+                            ):
+                                raise ValueError(
+                                    f'Invalid decoder_last_pipeline_num_layers_split: '
+                                    f'{self.num_layers_split_in_last_pipeline_stage}'
+                                )
+                        else:
+                            self.num_layers_split_in_last_pipeline_stage = \
+                                self.split_pipeline_stage(
+                                    'last',
+                                    self.num_layers_in_last_pipeline_stage,
+                                    self.virtual_pipeline_model_parallel_size
+                                )
                 num_layers -= self.num_layers_in_last_pipeline_stage
                 pipeline_parallel_size -= 1
 
