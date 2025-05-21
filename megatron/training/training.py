@@ -2094,7 +2094,7 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
                 learning_rate = param_group['lr']
         grad_norm_per_layer = None
         if args.log_grad_norm_per_layer:
-            grad_norm_per_layer = optimizer.get_grad_norm_per_layer()    
+            grad_norm_per_layer = optimizer.get_grad_norm_per_layer(model)
         report_memory_flag = training_log(loss_dict, total_loss_dict,
                                           learning_rate,
                                           decoupled_learning_rate,
