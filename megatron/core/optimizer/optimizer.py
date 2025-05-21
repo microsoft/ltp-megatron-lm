@@ -156,7 +156,7 @@ class MegatronOptimizer(ABC):
 
         return grads_for_norm
 
-    def get_main_grads_for_grad_norm_per_layer(self, model_chunks) -> Dict[Union[int, str], List[torch.Tensor]]:
+    def get_main_grads_for_grad_norm_per_layer(self) -> Dict[Union[int, str], List[torch.Tensor]]:
         """
         Get per-layer main_grads that should be taken into account to compute the grad norm.
         Currently only support DistributedDataParallel (DDP).
@@ -167,6 +167,11 @@ class MegatronOptimizer(ABC):
             args = get_args()
             transformer_config = core_transformer_config_from_args(args)
             global_layer_offset = get_transformer_layer_offset(transformer_config)
+
+            if isinstance(self, ChainedOptimizer):
+                model_chunks = self.model_chunks
+            else:
+                model_chunks = self.optimizer.model_chunks
 
             for model_chunk in model_chunks:
                 named_parameters = model_chunk.named_parameters()
@@ -244,9 +249,9 @@ class MegatronOptimizer(ABC):
         return total_norm
 
     @torch.no_grad()
-    def get_grad_norm_per_layer(self, model_chunks):
+    def get_grad_norm_per_layer(self):
         """Compute and return per-layer grad norm."""
-        grads_for_norm_per_layer = self.get_main_grads_for_grad_norm_per_layer(model_chunks)
+        grads_for_norm_per_layer = self.get_main_grads_for_grad_norm_per_layer()
 
         args = get_args()
         extra_patterns = args.log_grad_norm_per_layer_extra_patterns
