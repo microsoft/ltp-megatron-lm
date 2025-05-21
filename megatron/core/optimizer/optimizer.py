@@ -192,9 +192,10 @@ class MegatronOptimizer(ABC):
                     for buffers in [model_chunk.buffers, model_chunk.expert_parallel_buffers]:
                         for buffer in buffers:
                             if param in buffer.param_to_bucket:
-                                grad_data = buffer.param_to_bucket[param].grad_data
+                                bucket = buffer.param_to_bucket[param]
+                                grad_data = bucket.grad_data
                                 param_start_index, param_end_index, _ = buffer.param_index_map[param]
-                                grad = grad_data[param_start_index : param_end_index]
+                                grad = grad_data[param_start_index - bucket.offset : param_end_index - bucket.offset]
                                 self.grads_for_norm_per_layer[global_layer_id].append(grad)
                                 grad_found = True
                                 break
