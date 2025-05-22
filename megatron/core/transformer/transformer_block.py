@@ -152,7 +152,9 @@ def get_num_layers_to_build(config: TransformerConfig) -> int:
             ), f"num_layers_per_pipeline_rank {num_layers_per_pipeline_rank} \
                 should be divisible by vp_size {vp_size}"
             num_layers_per_virtual_rank = num_layers_per_pipeline_rank // vp_size
+
             num_layers_to_build = num_layers_per_virtual_rank
+
     else:
         # Non-interleaved pipeline parallelism:
         # Each stage gets a contiguous set of layers.
