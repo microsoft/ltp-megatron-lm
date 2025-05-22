@@ -1821,6 +1821,8 @@ def _add_initialization_args(parser):
                        help='Enable Xavier uniform parameter initialization')
     group.add_argument('--use-init-method-for-output-layer', action='store_true',
                        help='Use the specified init method for output layer.')
+    group.add_argument('--use-kaiming-init-for-moe-router', action='store_true',
+                       help='Use Kaiming initialization for MoE router weights.')
 
     return parser
 
