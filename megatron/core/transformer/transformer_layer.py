@@ -101,19 +101,19 @@ def get_transformer_layer_offset(config: TransformerConfig):
                 )
 
                 if (
-                    config.num_layers_split_in_first_pipeline_stage is not None
-                    or config.num_layers_split_in_last_pipeline_stage is not None
+                    config.decoder_first_pipeline_num_layers_split is not None
+                    or config.decoder_last_pipeline_num_layers_split is not None
                 ):
-                    if config.num_layers_split_in_first_pipeline_stage is not None:
-                        first_stage_split = config.num_layers_split_in_first_pipeline_stage
+                    if config.decoder_first_pipeline_num_layers_split is not None:
+                        first_stage_split = config.decoder_first_pipeline_num_layers_split
                     else:
                         first_stage_split = [
                             num_layers_per_virtual_model_chunk_in_first_pipeline_stage
                             for _ in range(vp_size)
                         ]
 
-                    if config.num_layers_split_in_last_pipeline_stage is not None:
-                        last_stage_split = config.num_layers_split_in_last_pipeline_stage
+                    if config.decoder_last_pipeline_num_layers_split is not None:
+                        last_stage_split = config.decoder_last_pipeline_num_layers_split
                     else:
                         last_stage_split = [
                             num_layers_per_virtual_model_chunk_in_last_pipeline_stage

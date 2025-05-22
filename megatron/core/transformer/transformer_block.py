@@ -135,17 +135,17 @@ def get_num_layers_to_build(config: TransformerConfig) -> int:
         vp_rank = parallel_state.get_virtual_pipeline_model_parallel_rank()
 
         if (
-            config.num_layers_split_in_first_pipeline_stage is not None
+            config.decoder_first_pipeline_num_layers_split is not None
             and parallel_state.is_pipeline_first_stage(ignore_virtual=True)
         ):
             num_layers_to_build = \
-                config.num_layers_split_in_first_pipeline_stage[vp_rank]
+                config.decoder_first_pipeline_num_layers_split[vp_rank]
         elif (
-            config.num_layers_split_in_last_pipeline_stage is not None
+            config.decoder_last_pipeline_num_layers_split is not None
             and parallel_state.is_pipeline_last_stage(ignore_virtual=True)
         ):
             num_layers_to_build = \
-                config.num_layers_split_in_last_pipeline_stage[vp_rank]
+                config.decoder_last_pipeline_num_layers_split[vp_rank]
         else:
             assert (
                 num_layers_per_pipeline_rank % vp_size == 0

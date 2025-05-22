@@ -246,9 +246,6 @@ def load_retro_args(args):
     args.retro_bert_tokenizer_type = retro_config.retro_bert_tokenizer_type
     args.retro_bert_vocab_file = retro_config.retro_bert_vocab_file
 
-def list_of_ints(list_str):
-    return list(map(int, list_str.split(',')))
-
 def moe_freq_type(x):
     """Frequency between MoE layers and Dense layers.
 
@@ -1021,8 +1018,6 @@ def core_transformer_config_from_args(args, config_class=None):
     kw_args['rotary_interleaved'] = args.rotary_interleaved
     kw_args['num_layers_in_first_pipeline_stage']= args.decoder_first_pipeline_num_layers
     kw_args['num_layers_in_last_pipeline_stage']= args.decoder_last_pipeline_num_layers
-    kw_args['num_layers_split_in_first_pipeline_stage'] = args.decoder_first_pipeline_num_layers_split
-    kw_args['num_layers_split_in_last_pipeline_stage'] = args.decoder_last_pipeline_num_layers_split
     kw_args['fp8_param'] = args.fp8_param_gather
     if args.swiglu:
         kw_args['activation_func'] = F.silu
@@ -2062,11 +2057,11 @@ def _add_distributed_args(parser):
                        help=('The number of transformer layers on the last pipeline stage of the decoder. '
                        'Default None is even split of transformer layers across all pipeline stages'))
     group.add_argument('--decoder-first-pipeline-num-layers-split',
-                       type=list_of_ints, default=None,
-                       help=('Virtual pipeline split in uneven pipeline mode of the first stage.'))
+                       nargs='+', type=int, default=None,
+                       help=('Virtual pipeline split of the first stage in uneven pipeline mode.'))
     group.add_argument('--decoder-last-pipeline-num-layers-split',
-                       type=list_of_ints, default=None,
-                       help=('Virtual pipeline split in uneven pipeline mode of the last stage.'))
+                       nargs='+', type=int, default=None,
+                       help=('Virtual pipeline split of the last stage in uneven pipeline mode.'))
     group.add_argument('--model-parallel-size', type=int, default=None,
                        help='Old model parallel argument, do not use. Use '
                        '--tensor-model-parallel-size instead.')
