@@ -513,7 +513,7 @@ def save_checkpoint(iteration, model, optimizer, opt_param_scheduler, num_floati
 
     # And update the latest iteration
     if not torch.distributed.is_initialized() \
-            or torch.distributed.get_rank() == 0:
+            or torch.distributed.get_rank() == 0 or args.ckpt_isolated_save and args.local_rank == 0:
         tracker_filename = get_checkpoint_tracker_filename(save_dir)
 
         if ckpt_type == CheckpointType.LOCAL:
@@ -555,7 +555,8 @@ def save_checkpoint(iteration, model, optimizer, opt_param_scheduler, num_floati
     if not torch.distributed.is_initialized() \
        or is_last_rank():
         def wandb_finalize_fn():
-            wandb_utils.on_save_checkpoint_success(checkpoint_name, get_checkpoint_tracker_filename(save_dir), save_dir, iteration)
+            if not args.ckpt_isolated_save:
+                wandb_utils.on_save_checkpoint_success(checkpoint_name, get_checkpoint_tracker_filename(save_dir), save_dir, iteration)
         if args.async_save:
             assert async_save_request is not None
             async_save_request.add_finalize_fn(wandb_finalize_fn)
@@ -1520,7 +1521,8 @@ def load_checkpoint(ddp_model, optimizer, opt_param_scheduler, load_arg='load', 
     # Additional callback for wandb (last rank)
     if not torch.distributed.is_initialized() \
        or is_last_rank():
-        wandb_utils.on_load_checkpoint_success(checkpoint_name, load_dir)
+        if not args.ckpt_isolated_save:
+            wandb_utils.on_load_checkpoint_success(checkpoint_name, load_dir)
 
     torch.cuda.empty_cache()
 
