@@ -1414,6 +1414,8 @@ def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_r
         if wandb_writer:
             wandb_writer.log({'samples vs steps': args.consumed_train_samples},
                              iteration)
+            wandb_writer.log({'tokens vs steps': args.consumed_train_samples * args.seq_length},
+                             iteration)
         writer.add_scalar('learning-rate', learning_rate, iteration)
         writer.add_scalar('learning-rate vs samples', learning_rate,
                             args.consumed_train_samples)
@@ -1454,6 +1456,7 @@ def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_r
                               args.consumed_train_samples)
             if wandb_writer:
                 wandb_writer.log({'grad-norm': grad_norm}, iteration)
+                wandb_writer.log({'grad-norm-with-scale': grad_norm * loss_scale}, iteration)
         if num_zeros_in_grad is not None:
             writer.add_scalar('num-zeros', num_zeros_in_grad, iteration)
             writer.add_scalar('num-zeros vs samples', num_zeros_in_grad,
