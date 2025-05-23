@@ -142,6 +142,10 @@ class TransformerConfig(ModelParallelConfig):
     multi_latent_attention: bool = False
     """Whether to use multi-latent attention."""
 
+    cross_entropy_label_smoothing: float = 0
+    """Smoothing factor for vocab_parallel_cross_entropy, must be in range [0.0, 1.0).
+       Default is no smoothing (=0.0)."""
+
     ####################
     # initialization
     ####################
