@@ -1993,6 +1993,12 @@ def _add_checkpointing_args(parser):
                             ' Check StrictHandling docs for flags meaning.'
                             ' NOTE: This flag controls only distributed checkpoint'
                             ' load from storage, not loading state dict into the model.')
+    group.add_argument('--ckpt-upload-blob-path', type=str, default=None,
+                       help='Azure blob path for checkpoint upload, do not include checkpoint name.')
+    group.add_argument('--ckpt-upload-blob-sas-path', type=str, default=None,
+                       help='Path to the file which contains Azure blob SAS token for checkpoint upload.')
+    group.add_argument('--ckpt-upload-blob-concurrency', type=str, default='AUTO',
+                       help='Number of concurrent requests that can occur during Azure blob upload.')
     return parser
 
 
