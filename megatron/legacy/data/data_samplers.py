@@ -25,7 +25,8 @@ def build_pretraining_data_loader(dataset, consumed_samples):
             consumed_samples=consumed_samples,
             micro_batch_size=args.micro_batch_size,
             data_parallel_rank=mpu.get_data_parallel_rank(),
-            data_parallel_size=mpu.get_data_parallel_world_size())
+            data_parallel_size=mpu.get_data_parallel_world_size(),
+            dataset_offset=args.dataset_offset)
     elif args.dataloader_type == 'cyclic':
         batch_sampler = MegatronPretrainingRandomSampler(
             dataset,
@@ -34,7 +35,8 @@ def build_pretraining_data_loader(dataset, consumed_samples):
             micro_batch_size=args.micro_batch_size,
             data_parallel_rank=mpu.get_data_parallel_rank(),
             data_parallel_size=mpu.get_data_parallel_world_size(),
-            data_sharding=args.data_sharding)
+            data_sharding=args.data_sharding,
+            dataset_offset=args.dataset_offset)
     elif args.dataloader_type == "external":
         # External dataloaders are passed through. User is expected to provide a
         # torch-compatible dataloader and define samplers, if needed.
@@ -54,10 +56,11 @@ def build_pretraining_data_loader(dataset, consumed_samples):
 class MegatronPretrainingSampler:
 
     def __init__(self, total_samples, consumed_samples, micro_batch_size,
-                 data_parallel_rank, data_parallel_size, drop_last=True):
+                 data_parallel_rank, data_parallel_size, drop_last=True,
+                 dataset_offset=0):
         # Keep a copy of input params for later use.
         self.total_samples = total_samples
-        self.consumed_samples = consumed_samples
+        self.consumed_samples = consumed_samples + dataset_offset
         self.micro_batch_size = micro_batch_size
         self.data_parallel_rank = data_parallel_rank
         self.micro_batch_times_data_parallel_size = \
@@ -67,6 +70,8 @@ class MegatronPretrainingSampler:
         # Sanity checks.
         assert self.total_samples > 0, \
             'no sample to consume: {}'.format(self.total_samples)
+        assert self.consumed_samples >= 0, \
+            'consumed samples {} cannot be negative'.format(self.consumed_samples)
         assert self.consumed_samples < self.total_samples, \
             'no samples left to consume: {}, {}'.format(self.consumed_samples,
                                                         self.total_samples)
@@ -125,11 +130,12 @@ class RandomSeedDataset(Dataset):
 class MegatronPretrainingRandomSampler:
 
     def __init__(self, dataset, total_samples, consumed_samples, micro_batch_size,
-                 data_parallel_rank, data_parallel_size, data_sharding):
+                 data_parallel_rank, data_parallel_size, data_sharding,
+                 dataset_offset=0):
         # Keep a copy of input params for later use.
         self.dataset = dataset
         self.total_samples = total_samples
-        self.consumed_samples = consumed_samples
+        self.consumed_samples = consumed_samples + dataset_offset
         self.micro_batch_size = micro_batch_size
         self.data_parallel_rank = data_parallel_rank
         self.data_parallel_size = data_parallel_size
@@ -142,6 +148,8 @@ class MegatronPretrainingRandomSampler:
         # Sanity checks.
         assert self.total_samples > 0, \
             'no sample to consume: {}'.format(self.total_samples)
+        assert self.consumed_samples >= 0, \
+            'consumed samples {} cannot be negative'.format(self.consumed_samples)
         assert self.micro_batch_size > 0
         assert data_parallel_size > 0
         assert self.data_parallel_rank < data_parallel_size, \
