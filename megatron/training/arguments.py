@@ -2553,6 +2553,10 @@ def _add_moe_args(parser):
                        choices=['softmax', 'sigmoid'],
                        default='softmax',
                        help='Score function for MoE TopK routing. Can be "softmax" or "sigmoid".')
+    group.add_argument('--moe-aux-loss-score-function', type=str,
+                       choices=['softmax', 'sigmoid'],
+                       default='softmax',
+                       help='Score function for computing MoE aux loss. Can be "softmax" or "sigmoid".')
     group.add_argument('--moe-router-topk', type=int, default=2,
                        help='Number of experts to route to for each token. The default is 2.')
     group.add_argument('--moe-router-pre-softmax', action='store_true',

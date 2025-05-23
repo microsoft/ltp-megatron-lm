@@ -128,6 +128,7 @@ class TopKRouter(Router):
         self.topk = self.config.moe_router_topk
         self.routing_type = self.config.moe_router_load_balancing_type
         self.score_function = self.config.moe_router_score_function
+        self.moe_aux_loss_score_function = self.config.moe_aux_loss_score_function
         self.input_jitter = None
 
         self.enable_expert_bias = self.config.moe_router_enable_expert_bias
@@ -197,9 +198,9 @@ class TopKRouter(Router):
         Returns:
             torch.Tensor: The normalized routing scores.
         """
-        if self.score_function == "softmax":
+        if self.moe_aux_loss_score_function == "softmax":
             scores = torch.softmax(logits, dim=-1, dtype=torch.float32)
-        elif self.score_function == "sigmoid":
+        elif self.moe_aux_loss_score_function == "sigmoid":
             scores = torch.sigmoid(logits)
             scores = (
                 scores / (scores.sum(dim=-1, keepdim=True) + 1e-20) if self.topk > 1 else scores

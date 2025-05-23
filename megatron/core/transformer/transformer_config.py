@@ -387,6 +387,9 @@ class TransformerConfig(ModelParallelConfig):
     moe_router_score_function: str = "softmax"
     """Score function for MoE routing. Can be "softmax" or "sigmoid"."""
 
+    moe_aux_loss_score_function: str = "softmax"
+    """Score function for computing MoE aux loss. Can be "softmax" or "sigmoid"."""
+
     moe_router_dtype: Optional[str] = None
     """Data type for routing and expert output weighted averaging. Using fp32 or fp64 can
     improve stability especially when the number of experts is large (e.g. finegrained-moe).
