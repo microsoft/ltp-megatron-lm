@@ -69,7 +69,17 @@ class Router(ABC, MegatronModule):
             router_dtype = torch.float32
         elif self.config.moe_router_dtype == 'fp64':
             router_dtype = torch.float64
-        logits = torch.nn.functional.linear(input.to(router_dtype), self.weight.to(router_dtype))
+        if self.config.moe_router_gradient_scale is not None:
+            gradient_scaled_weight = (
+                self.weight.to(router_dtype) * self.config.moe_router_gradient_scale +
+                self.weight.to(router_dtype).detach() * (1 - self.config.moe_router_gradient_scale)
+            )
+            if self.config.moe_router_gradient_scale_normalize:
+                # self.weight.shape is (num_experts, hidden_size) so hidden_size dim is normalized
+                gradient_scaled_weight = torch.nn.functional.normalize(gradient_scaled_weight)
+            logits = torch.nn.functional.linear(input.to(router_dtype), gradient_scaled_weight)
+        else:
+            logits = torch.nn.functional.linear(input.to(router_dtype), self.weight.to(router_dtype))
         return logits
 
     @abstractmethod

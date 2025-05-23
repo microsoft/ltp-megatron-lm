@@ -400,6 +400,12 @@ class TransformerConfig(ModelParallelConfig):
     and decreased for the experts with more assigned tokens.
     The default value 1e-3 is same as that used in DeepSeekV3."""
 
+    moe_router_gradient_scale: float = None
+    """Gradient scale of MoE router weights."""
+
+    moe_router_gradient_scale_normalize: bool = False
+    """When MoE router gradient scaling is enabled, further normalize the weights."""
+
     moe_grouped_gemm: bool = False
     """When there are multiple experts per rank, compress multiple local (potentially small) gemms
     in a single kernel launch to improve the utilization and performance by leveraging the Grouped
