@@ -2111,6 +2111,11 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
         if should_exit:
             break
 
+        if args.manual_gc and \
+           args.manual_gc_after_checkpoint_interval != 0 and \
+           iteration % args.manual_gc_after_checkpoint_interval == 0:
+            gc.collect()
+
     one_logger_utils.track_e2e_metrics()
 
     # Flush TensorBoard, WandB writers and one-logger.
