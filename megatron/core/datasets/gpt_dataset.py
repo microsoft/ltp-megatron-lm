@@ -16,6 +16,7 @@ from megatron.core.datasets.megatron_tokenizer import MegatronTokenizer
 from megatron.core.datasets.utils import Split
 from megatron.core.datasets.utils_s3 import S3Config, is_s3_path
 from megatron.core.utils import log_single_rank
+from megatron.training import get_args
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,7 @@ class GPTDataset(MegatronDataset):
         num_samples: Optional[int],
         index_split: Split,
         config: GPTDatasetConfig,
+        scale_shuffle_weight: Optional[float] = None,
     ) -> None:
         super().__init__(
             indexed_dataset, dataset_path, indexed_indices, num_samples, index_split, config
@@ -109,6 +111,8 @@ class GPTDataset(MegatronDataset):
         except Exception:
             self._pad_token_id = _PAD_TOKEN_ID
 
+        self.scale_shuffle_weight = scale_shuffle_weight
+
         (self.document_index, self.sample_index, self.shuffle_index) = (
             self._build_document_sample_shuffle_indices()
         )
@@ -129,13 +133,18 @@ class GPTDataset(MegatronDataset):
         return low_level_dataset.sequence_lengths.shape[0]
 
     @staticmethod
-    def build_low_level_dataset(dataset_path: str, config: GPTDatasetConfig) -> IndexedDataset:
+    def build_low_level_dataset(
+        dataset_path: str,
+        config: GPTDatasetConfig,
+        scale_shuffle_weight: Optional[float] = None) -> IndexedDataset:
         """Abstract method implementation
 
         Args:
             dataset_path (str): The real path prefix to the IndexedDataset .bin and .idx files
 
             config (GPTDatasetConfig): The config
+
+            scale_shuffle_weight (Optional[float]): When scale-shuffle is enabled, weight for current low-level dataset.
 
         Returns:
             IndexedDataset: The underlying IndexedDataset
@@ -147,7 +156,13 @@ class GPTDataset(MegatronDataset):
                 mmap=config.mmap_bin_files,
                 s3_config=S3Config(path_to_idx_cache=config.s3_cache_path),
             )
-        return IndexedDataset(dataset_path, multimodal=False, mmap=config.mmap_bin_files)
+        return IndexedDataset(
+            dataset_path,
+            multimodal=False,
+            mmap=config.mmap_bin_files,
+            scale_shuffle_weight=scale_shuffle_weight,
+            scale_shuffle_seed=get_args().seed,
+            split_matrix=config.split_matrix)
 
     def __len__(self) -> int:
         """Abstract method implementation
@@ -409,7 +424,7 @@ class GPTDataset(MegatronDataset):
 
             # Build the document index
             document_index = _build_document_index(
-                self.indices, num_epochs, numpy_random_state, separate_final_epoch
+                self.indices, num_epochs, numpy_random_state, separate_final_epoch, self.scale_shuffle_weight
             )
 
             drop_last_partial_sequence = True
@@ -450,11 +465,11 @@ class GPTDataset(MegatronDataset):
             # Build the shuffle index
             if separate_final_epoch:
                 shuffle_index = _build_shuffle_index(
-                    num_samples_sans_final_epoch, sample_index.shape[0] - 1, numpy_random_state
+                    num_samples_sans_final_epoch, sample_index.shape[0] - 1, numpy_random_state, self.scale_shuffle_weight
                 )
             else:
                 shuffle_index = _build_shuffle_index(
-                    sample_index.shape[0] - 1, sample_index.shape[0] - 1, numpy_random_state
+                    sample_index.shape[0] - 1, sample_index.shape[0] - 1, numpy_random_state, self.scale_shuffle_weight
                 )
 
             if path_to_cache:
@@ -558,6 +573,7 @@ def _build_document_index(
     num_epochs: int,
     numpy_random_state: numpy.random.RandomState,
     separate_final_epoch: bool,
+    scale_shuffle_weight: Optional[float],
 ) -> numpy.ndarray:
     """Build an array with length = num epochs * num documents
 
@@ -570,6 +586,8 @@ def _build_document_index(
 
         separate_final_epoch (bool): Whether to exclude the last epoch from the global shuffle
 
+        scale_shuffle_weight (Optional[float]): When scale-shuffle is enabled, weight for current low-level dataset
+
     Returns:
         numpy.ndarray: The document index
     """
@@ -578,16 +596,17 @@ def _build_document_index(
         document_index[:] = documents
         document_index = document_index.reshape(-1)
         document_index = document_index.astype(numpy.int32)
-        numpy_random_state.shuffle(document_index)
+        if scale_shuffle_weight is None:
+            numpy_random_state.shuffle(document_index)
         return document_index
 
-    doc_idx_first = _build_document_index(documents, num_epochs - 1, numpy_random_state, False)
-    doc_idx_last = _build_document_index(documents, 1, numpy_random_state, False)
+    doc_idx_first = _build_document_index(documents, num_epochs - 1, numpy_random_state, False, scale_shuffle_weight)
+    doc_idx_last = _build_document_index(documents, 1, numpy_random_state, False, scale_shuffle_weight)
     return numpy.concatenate((doc_idx_first, doc_idx_last))
 
 
 def _build_shuffle_index(
-    num_samples: int, total_size: int, numpy_random_state: numpy.random.RandomState
+    num_samples: int, total_size: int, numpy_random_state: numpy.random.RandomState, scale_shuffle_weight: Optional[float]
 ) -> numpy.ndarray:
     """Build the range [0, size) and shuffle
 
@@ -599,6 +618,8 @@ def _build_shuffle_index(
 
         numpy_random_state (numpy.random.RandomState): The NumPy random state
 
+        scale_shuffle_weight (Optional[float]): When scale-shuffle is enabled, weight for current low-level dataset
+
     Returns:
         numpy.ndarray: The shuffle index
     """
@@ -607,12 +628,14 @@ def _build_shuffle_index(
         dtype_ = numpy.int64
 
     shuffle_idx_first = numpy.arange(start=0, stop=num_samples, step=1, dtype=dtype_)
-    numpy_random_state.shuffle(shuffle_idx_first)
+    if scale_shuffle_weight is None:
+        numpy_random_state.shuffle(shuffle_idx_first)
     if num_samples == total_size:
         return shuffle_idx_first
 
     shuffle_idx_last = numpy.arange(start=num_samples, stop=total_size, step=1, dtype=dtype_)
-    numpy_random_state.shuffle(shuffle_idx_last)
+    if scale_shuffle_weight is None:
+        numpy_random_state.shuffle(shuffle_idx_last)
 
     return numpy.concatenate((shuffle_idx_first, shuffle_idx_last))
 

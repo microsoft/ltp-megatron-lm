@@ -2319,6 +2319,8 @@ def _add_data_args(parser):
                        help='Number of parallel threads per rank for dataset builder')
     group.add_argument('--s3-cache-path', type=str, default=None,
                        help='Path to cache index files when using s3 dataloader')
+    group.add_argument('--scale-shuffle', action='store_true',
+                       help='Whether to enable scale-shuffle at lowest-level datasets.')
     return parser
 
 

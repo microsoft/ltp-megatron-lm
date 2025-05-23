@@ -163,6 +163,7 @@ class _IndexWriter(object):
         sequence_lengths: List[int],
         sequence_modes: Optional[List[int]],
         document_indices: List[int],
+        sequence_pointers: Optional[List[int]] = None,
     ) -> None:
         """Write the index (.idx) file
 
@@ -172,8 +173,11 @@ class _IndexWriter(object):
             sequence_modes (Optional[List[int]]): The mode of each sequences
 
             document_indices (List[int]): The seqyebce indices demarcating the end of each document
+
+            sequence_pointers (Optional[List[int]]): The pointer to the beginning of each sequence
         """
-        sequence_pointers = self._sequence_pointers(sequence_lengths)
+        if sequence_pointers is None:
+            sequence_pointers = self._sequence_pointers(sequence_lengths)
 
         # the number of sequences in the dataset
         sequence_count = len(sequence_lengths)
@@ -230,7 +234,27 @@ class _IndexReader(object):
         multimodal (bool): Whether the dataset is multimodal
     """
 
-    def __init__(self, idx_path: str, multimodal: bool) -> None:
+    def __init__(
+            self,
+            idx_path: str,
+            multimodal: bool,
+            scale_shuffle_weight: Optional[float] = None,
+            scale_shuffle_seed: Optional[int] = None,
+            split_matrix: Optional[List[Tuple[float, float]]] = None,
+        ) -> None:
+        if scale_shuffle_weight is not None:
+            scale_shuffle_idx_path = idx_path + '.scale_shuffle'
+            scale_shuffle_idx_exist = os.path.isfile(scale_shuffle_idx_path)
+            if scale_shuffle_idx_exist:
+                self._load_index(scale_shuffle_idx_path, multimodal)
+            else:
+                self._load_index(idx_path, multimodal)
+                self._build_save_apply_scale_shuffle_index(
+                    scale_shuffle_weight, scale_shuffle_seed, split_matrix, scale_shuffle_idx_path)
+        else:
+            self._load_index(idx_path, multimodal)
+ 
+    def _load_index(self, idx_path: str, multimodal: bool) -> None:
 
         log_single_rank(logger, logging.INFO, f"Load the {type(self).__name__} from {idx_path}")
 
@@ -339,6 +363,105 @@ class _IndexReader(object):
             self.sequence_lengths[idx],
             self.sequence_modes[idx] if self.sequence_modes is not None else None,
         )
+
+    def _build_save_apply_scale_shuffle_index(
+            self,
+            scale_shuffle_weight: float,
+            scale_shuffle_seed: int,
+            split_matrix: Optional[List[Tuple[float, float]]],
+            scale_shuffle_idx_path: str,
+        ):
+        g = torch.Generator()
+        g.manual_seed(scale_shuffle_seed)
+        real_doc_cnt = self.document_count - 1
+        # 1. Isolate document indices from different splits before scaling and shuffling them
+        if split_matrix is None:
+            split_doc_idx_ranges = [[1, self.document_count]]
+        else:
+            split_doc_idx_ranges = [
+                (
+                    [int(y * real_doc_cnt) + 1 for y in x]
+                    if x is not None
+                    else [0, 0]
+                )
+                for x in split_matrix
+            ]
+        # 2. Scale and shuffle the document indices, do intra-epoch shuffle and keep inter-epoch order
+        scale_shuffle_weight_fracs = [1] * int(scale_shuffle_weight) + [scale_shuffle_weight - int(scale_shuffle_weight)]
+        scaled_shuffled_doc_idx_indices = []
+        for i in split_doc_idx_ranges:
+            indices = []
+            for scale_frac in scale_shuffle_weight_fracs:
+                perm_size = i[1] - i[0]
+                perm = torch.randperm(perm_size, generator=g).tolist()
+                perm = perm[:int(perm_size * scale_frac)]
+                indices += [x + i[0] for x in perm]
+            scaled_shuffled_doc_idx_indices += indices
+        scaled_document_count = len(scaled_shuffled_doc_idx_indices) + 1
+
+        # 3. Generate new consecutive sequence index ranges according to shuffled document indices
+        scaled_document_indices = [0] * scaled_document_count
+        for i, doc_idx_idx in enumerate(scaled_shuffled_doc_idx_indices):
+            num_seq_in_doc = self.document_indices[doc_idx_idx] - self.document_indices[doc_idx_idx - 1]
+            scaled_document_indices[i + 1] = scaled_document_indices[i] + num_seq_in_doc
+        # 4. Generate new sequence lengths, pointers and modes according to shuffled document indices
+        scaled_sequence_count = scaled_document_indices[-1]
+        scaled_sequence_lengths = [0] * scaled_sequence_count
+        scaled_sequence_pointers = [0] * scaled_sequence_count
+        scaled_sequence_modes = None
+        if self.sequence_modes is not None:
+            scaled_sequence_modes = [0] * scaled_sequence_count
+        scaled_sequence_idx = 0
+        for i, doc_idx_idx in enumerate(scaled_shuffled_doc_idx_indices):
+            beg_seq_idx = self.document_indices[doc_idx_idx - 1]
+            end_seq_idx = self.document_indices[doc_idx_idx]
+            for seq_idx in range(beg_seq_idx, end_seq_idx):
+                scaled_sequence_lengths[scaled_sequence_idx] = self.sequence_lengths[seq_idx]
+                scaled_sequence_pointers[scaled_sequence_idx] = self.sequence_pointers[seq_idx]
+                if self.sequence_modes is not None:
+                    scaled_sequence_modes[scaled_sequence_idx] = self.sequence_modes[seq_idx]
+                scaled_sequence_idx += 1
+
+        # 5. Save scale-shuffle index
+        if torch.distributed.is_initialized():
+            local_rank = torch.distributed.get_rank() % torch.cuda.device_count()
+        else:
+            local_rank = 0
+        if local_rank == 0:
+            with _IndexWriter(scale_shuffle_idx_path + '.tmp', numpy.int32) as writer:
+                writer.write(scaled_sequence_lengths, scaled_sequence_modes, scaled_document_indices, scaled_sequence_pointers)
+            # Make sure full file content is visible to other ranks
+            os.rename(scale_shuffle_idx_path + '.tmp', scale_shuffle_idx_path)
+
+        # 6. Apply scale-shuffle index
+        self.sequence_count = scaled_sequence_count
+        self.document_count = scaled_document_count
+
+        scaled_sequence_lengths_np = numpy.array(scaled_sequence_lengths, dtype=self.sequence_lengths.dtype)
+        del self.sequence_lengths
+        del scaled_sequence_lengths
+        self.sequence_lengths = scaled_sequence_lengths_np
+
+        scaled_sequence_pointers_np = numpy.array(scaled_sequence_pointers, dtype=self.sequence_pointers.dtype)
+        del self.sequence_pointers
+        del scaled_sequence_pointers
+        self.sequence_pointers = scaled_sequence_pointers_np
+
+        scaled_document_indices_np = numpy.array(scaled_document_indices, dtype=self.document_indices.dtype)
+        del self.document_indices
+        del scaled_document_indices
+        self.document_indices = scaled_document_indices_np
+
+        if self.sequence_modes is not None:
+            scaled_sequence_modes_np = numpy.array(scaled_sequence_modes, dtype=self.sequence_modes.dtype)
+            del self.sequence_modes
+            del scaled_sequence_modes
+            self.sequence_modes = scaled_sequence_modes_np
+
+        # 7. Clear mmap of original index
+        del self.bin_buffer
+        self.bin_buffer_mmap._mmap.close()
+        del self.bin_buffer_mmap
 
 
 class _BinReader(ABC):
@@ -514,6 +637,12 @@ class IndexedDataset(torch.utils.data.Dataset):
         mmap (bool): Whether to mmap the .bin files. Defaults to True.
 
         s3_config (Optional[S3Config]): Supplied only for data stored on S3. IndexedDataset downloads the index (.idx) file to `s3_config.path_to_idx_cache` and streams data from the data (.bin) file in `s3_config.bin_chunk_nbytes` blocks. Note that `mmap` must be disabled for S3 data loading. Defaults to None.
+
+        scale_shuffle_weight (Optional[float]): The scaling weight in scale-and-shuffle.
+
+        scale_shuffle_seed (Optional[int]): Random seed used in scale-and-shuffle.
+
+        split_matrix (Optional[List[Tuple[float, float]]]): Train/valid/test splits for scale-and-shuffle.
     """
 
     def __init__(
@@ -522,12 +651,18 @@ class IndexedDataset(torch.utils.data.Dataset):
         multimodal: bool = False,
         mmap: bool = True,
         s3_config: Optional[S3Config] = None,
+        scale_shuffle_weight: Optional[float] = None,
+        scale_shuffle_seed: Optional[int] = None,
+        split_matrix: Optional[List[Tuple[float, float]]] = None,
     ) -> None:
         super().__init__()
         self.path_prefix = None
         self.multimodal = None
         self.mmap = None
         self.s3_config = None
+        self.scale_shuffle_weight = None
+        self.scale_shuffle_seed = None
+        self.split_matrix = None
 
         self.index = None
         self.bin_reader = None
@@ -537,10 +672,11 @@ class IndexedDataset(torch.utils.data.Dataset):
             cache_idx_path = os.path.join(s3_config.path_to_idx_cache, os.path.basename(idx_path))
             maybe_download_file(idx_path, cache_idx_path)
 
-        self.initialize(path_prefix, multimodal, mmap, s3_config)
+        self.initialize(path_prefix, multimodal, mmap, s3_config, scale_shuffle_weight, scale_shuffle_seed, split_matrix)
 
     def initialize(
-        self, path_prefix: str, multimodal: bool, mmap: bool, s3_config: Optional[S3Config]
+        self, path_prefix: str, multimodal: bool, mmap: bool, s3_config: Optional[S3Config],
+        scale_shuffle_weight: Optional[float], scale_shuffle_seed: Optional[int], split_matrix: Optional[List[Tuple[float, float]]]
     ) -> None:
         """Initialize the dataset
 
@@ -555,6 +691,12 @@ class IndexedDataset(torch.utils.data.Dataset):
             mmap (bool): Whether to mmap the .bin file
 
             s3_config (Optional[S3Config]): See IndexedDataset docstring for details.
+
+            scale_shuffle_weight (Optional[float]): The scaling weight in scale-and-shuffle.
+
+            scale_shuffle_seed (Optional[int]): Random seed used in scale-and-shuffle.
+
+            split_matrix (Optional[List[Tuple[float, float]]]): Train/valid/test splits for scale-and-shuffle.
         """
         idx_path = get_idx_path(path_prefix)
         bin_path = get_bin_path(path_prefix)
@@ -566,6 +708,9 @@ class IndexedDataset(torch.utils.data.Dataset):
         self.multimodal = multimodal
         self.mmap = mmap
         self.s3_config = s3_config
+        self.scale_shuffle_weight = scale_shuffle_weight
+        self.scale_shuffle_seed = scale_shuffle_seed
+        self.split_matrix = split_matrix
         if mmap:
             assert not s3_config
             self.bin_reader = _MMapBinReader(bin_path)
@@ -577,7 +722,7 @@ class IndexedDataset(torch.utils.data.Dataset):
             )
         else:
             self.bin_reader = _FileBinReader(bin_path)
-        self.index = _IndexReader(idx_path, self.multimodal)
+        self.index = _IndexReader(idx_path, self.multimodal, self.scale_shuffle_weight, self.scale_shuffle_seed, self.split_matrix)
 
     def __getstate__(self) -> Tuple[str, bool, bool, Optional[S3Config]]:
         """Get the state during pickling
@@ -635,17 +780,27 @@ class IndexedDataset(torch.utils.data.Dataset):
             start, stop, step = idx.indices(len(self))
             if step != 1:
                 raise ValueError("Slices into indexed_dataset must be contiguous")
-            sequence_lengths = self.index.sequence_lengths[idx]
+            if self.scale_shuffle_weight is not None:
+                sequences = [
+                    self.bin_reader.read(
+                        dtype=self.index.dtype,
+                        count=self.index.sequence_lengths[i],
+                        offset=self.index.sequence_pointers[i]
+                    )
+                    for i in range(*idx.indices(len(self)))
+                ]
+            else:
+                sequence_lengths = self.index.sequence_lengths[idx]
+                sequence_offsets = list(accumulate(sequence_lengths))
+                sequences = numpy.split(
+                    self.bin_reader.read(
+                        dtype=self.index.dtype,
+                        count=sum(sequence_lengths),
+                        offset=self.index.sequence_pointers[start],
+                    ),
+                    sequence_offsets[:-1],
+                )
             sequence_modes = self.index.sequence_modes[idx] if self.multimodal else None
-            sequence_offsets = list(accumulate(sequence_lengths))
-            sequences = numpy.split(
-                self.bin_reader.read(
-                    dtype=self.index.dtype,
-                    count=sum(sequence_lengths),
-                    offset=self.index.sequence_pointers[start],
-                ),
-                sequence_offsets[:-1],
-            )
             return (sequences, sequence_modes) if sequence_modes is not None else sequences
         else:
             raise TypeError("Unexpected type received for idx: {}".format(type(idx)))
