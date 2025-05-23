@@ -448,6 +448,9 @@ class TransformerConfig(ModelParallelConfig):
     moe_layer_recompute: bool = False
     """Memory optimization: checkpointing moe_layer to save actiavtion memory."""
 
+    moe_layer_recompute_freq: int = None
+    """Frequency to enable MoE layer recompute."""
+
     moe_permute_fusion: bool = False
     """Fuse token rearrangement ops during token dispatching."""
 
