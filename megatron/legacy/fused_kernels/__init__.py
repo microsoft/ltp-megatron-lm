@@ -4,6 +4,7 @@ import os
 import pathlib
 import subprocess
 
+import torch
 from torch.utils import cpp_extension
 
 # Setting this param to a list has a problem of generating different
@@ -15,6 +16,10 @@ os.environ["TORCH_CUDA_ARCH_LIST"] = ""
 
 
 def load(args):
+
+    # Disable fused kernel build for ROCm
+    if torch.version.hip:
+        return
 
     # Check if cuda 11 is installed for compute capability 8.0
     cc_flag = []
