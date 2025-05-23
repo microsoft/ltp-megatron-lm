@@ -1105,7 +1105,10 @@ class ChainedOptimizer(MegatronOptimizer):
         if self.grads_states_parallel_group_is_shared():
             params = []
             for optimizer in self.chained_optimizers:
-                params += optimizer.get_parameters()
+                if optimizer.config.log_num_zeros_in_grad:
+                    params += optimizer.get_parameters()
+            if len(params) == 0:
+                return 0
             return count_zeros_fp32(
                 params,
                 grad_stats_parallel_group=self.get_grad_stats_parallel_group(),
