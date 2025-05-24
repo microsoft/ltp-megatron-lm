@@ -334,10 +334,12 @@ class TransformerConfig(ModelParallelConfig):
 
     moe_router_load_balancing_type: str = "aux_loss"
     """The load balancing strategy for the router. "aux_loss" corresponds to the load balancing loss
-    used in GShard and SwitchTransformer; "seq_aux_loss" corresponds to the load balancing loss used
-    in DeepSeekV2 and DeepSeekV3, which computes the loss for each individual sample; "sinkhorn"
-    corresponds to the balancing algorithm used in S-BASE, and "none" implies no load balancing.
-    The default is "aux_loss"."""
+    used in GShard and SwitchTransformer; "seq_aux_loss" corresponds to the loss used in DeepSeekV2,
+    which computes the loss for each individual sample; "sinkhorn" corresponds to the balancing
+    algorithm used in S-BASE; "global_batch" corresponds to the global batch load balancing loss
+    (see https://arxiv.org/abs/2501.11873 for details), and "none" implies no load balancing. The
+    default is "aux_loss"."""
+
 
     moe_router_topk: int = 2
     """Number of experts to route to for each token."""
