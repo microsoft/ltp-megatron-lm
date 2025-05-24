@@ -2577,6 +2577,8 @@ def _add_moe_args(parser):
                        'The expert bias is updated based on the number of assigned tokens to each expert in a global batch, '
                        'where the bias is increased for the experts with less assigned tokens and decreased for the experts with more assigned tokens. '
                        'The default value 1e-3 is same as that used in DeepSeekV3.')
+    group.add_argument('--moe-router-force-load-balancing', action='store_true',
+                       help='[Experimental] Force override routing to balance token distribution using random logits for MoE routers, supporting naive top-k and group-limited top-k. This experimental feature is for benchmarking purposes only!')
     group.add_argument('--moe-router-gradient-scale', type=float, default=None,
                        help='Gradient scale of MoE router weights.')
     group.add_argument('--moe-router-gradient-scale-normalize', action='store_true',
