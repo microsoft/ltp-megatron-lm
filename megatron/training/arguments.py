@@ -25,6 +25,7 @@ from megatron.core.transformer.enums import AttnBackend
 from megatron.core.transformer.heterogeneous.heterogeneous_config import HeterogeneousTransformerConfig
 from megatron.core.utils import (
     get_torch_version,
+    init_method_normal,
     is_torch_min_version,
 )
 from megatron.training.activations import squared_relu
@@ -1031,6 +1032,8 @@ def core_transformer_config_from_args(args, config_class=None):
     if args.init_method_xavier_uniform:
         kw_args['init_method'] = torch.nn.init.xavier_uniform_
         kw_args['scaled_init_method'] = torch.nn.init.xavier_uniform_
+    if args.output_layer_init_method_normal:
+        kw_args['output_layer_init_method'] = init_method_normal(args.output_layer_init_method_normal_std)
     if args.group_query_attention:
         kw_args['num_query_groups'] = args.num_query_groups
     else:
@@ -1819,8 +1822,11 @@ def _add_initialization_args(parser):
                        'distribution used for weight initialization.')
     group.add_argument('--init-method-xavier-uniform', action='store_true',
                        help='Enable Xavier uniform parameter initialization')
-    group.add_argument('--use-init-method-for-output-layer', action='store_true',
-                       help='Use the specified init method for output layer.')
+    group.add_argument('--output-layer-init-method-normal', action='store_true',
+                       help='Use normal distribution weight initialization for output layers.')
+    group.add_argument('--output-layer-init-method-normal-std', type=float, default=0.02,
+                       help='Standard deviation of the zero mean normal '
+                       'distribution used for weight initialization for output layers.')
 
     return parser
 

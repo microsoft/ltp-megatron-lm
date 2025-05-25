@@ -160,9 +160,6 @@ class TransformerConfig(ModelParallelConfig):
     will be set to megatron.core.utils.scaled_init_method_normal(init_method_std) which is torch nn
     init normal with mean=0.0 and std=init_method_std / math.sqrt(2.0 * num_layers)."""
 
-    use_init_method_for_output_layer: bool = False
-    """If True, use the specified init_method for output layer."""
-
     init_method_std: float = 0.02
     """Standard deviation of the zero mean normal for the default initialization method, not used if
     init_method and output_layer_init_method are provided."""
@@ -948,9 +945,6 @@ class TransformerConfig(ModelParallelConfig):
 
         if self.init_method is None:
             self.init_method = init_method_normal(self.init_method_std)
-
-        if self.use_init_method_for_output_layer:
-            self.output_layer_init_method = self.init_method
 
         if self.output_layer_init_method is None:
             self.output_layer_init_method = scaled_init_method_normal(
