@@ -797,6 +797,13 @@ def track_moe_metrics(
                         {f"moe/{name}_layer_{i}": val for i, val in enumerate(metric_list.tolist())},
                         iteration,
                     )
+
+        wandb_info = dict()
+        for name, metric_list in token_metrics.items():
+            if wandb_writer is not None:
+                wandb_info.update({f'moe-expert/{name}_layer{i}_expert{j}': metric_list[i][j].item() for i in range(len(metric_list)) for j in range(len(metric_list[i]))})
+        if wandb_writer is not None:
+            wandb_writer.log(wandb_info, iteration)
     clear_aux_losses_tracker()
 
 
