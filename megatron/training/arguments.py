@@ -1403,6 +1403,10 @@ def _add_logging_args(parser):
                        help='If set, log progress (in terms of number of processed tokens and '
                        'number of floating-point operations) to progress.txt file in checkpoint '
                        'directory.')
+    group.add_argument('--log-param-norm-per-param', action='store_true',
+                        help='If set, calculate and log parameters norm per parameter.')
+    group.add_argument('--log-update-norm-per-param', action='store_true',
+                        help='If set, calculate and log update norm per parameter.')
     group.add_argument('--timing-log-level', type=int,
                        default=0, choices=range(0,3),
                        help='Granularity level to measure and report timing. '

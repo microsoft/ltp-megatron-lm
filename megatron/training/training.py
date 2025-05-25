@@ -27,7 +27,7 @@ from megatron.core.utils import (
     check_param_hashes_across_dp_replicas,
     get_model_config,
     StragglerDetector,
-    is_te_min_version,
+    is_te_min_version
 )
 from megatron.core.fp8_utils import correct_amax_history_if_needed
 from megatron.training.checkpointing import load_checkpoint
@@ -59,6 +59,7 @@ from megatron.training.initialize import set_jit_fusion_options
 from megatron.training.utils import (
     get_batch_on_this_cp_rank,
     get_batch_on_this_tp_rank,
+    NormalizationCalculator,
 )
 from megatron.legacy.data.data_samplers import build_pretraining_data_loader
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
@@ -1347,7 +1348,10 @@ def train_step(forward_step_func, data_iterator,
 
 def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_rate, iteration,
                  loss_scale, report_memory_flag, skipped_iter,
-                 grad_norm, params_norm, num_zeros_in_grad):
+                 grad_norm, params_norm, num_zeros_in_grad,
+                 param_norm_per_param, param_norm_per_expert,
+                 update_norm_per_param, update_norm_per_expert,
+                 ):
     """Log training information such as losses, timing, ...."""
     args = get_args()
     timers = get_timers()
@@ -1488,6 +1492,26 @@ def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_r
                               args.consumed_train_samples)
             if wandb_writer:
                 wandb_writer.log({'params-norm': params_norm}, iteration)
+        if param_norm_per_param is not None:
+            for key, param_norm in param_norm_per_param.items():
+                writer.add_scalar(f'param-norm-{key}', param_norm, iteration)
+                if wandb_writer:
+                    wandb_writer.log({f'param-norm-{key}': param_norm}, iteration)
+        if param_norm_per_expert is not None:
+            for key, param_norm in param_norm_per_expert.items():
+                writer.add_scalar(f'param-norm-expert-{key}', param_norm, iteration)
+                if wandb_writer:
+                    wandb_writer.log({f'param-norm-expert-{key}': param_norm}, iteration)
+        if update_norm_per_param is not None:
+            for key, update_norm in update_norm_per_param.items():
+                writer.add_scalar(f'update-norm-{key}', update_norm, iteration)
+                if wandb_writer:
+                    wandb_writer.log({f'update-norm-{key}': update_norm}, iteration)
+        if update_norm_per_expert is not None:
+            for key, update_norm in update_norm_per_expert.items():
+                writer.add_scalar(f'update-norm-expert-{key}', update_norm, iteration)
+                if wandb_writer:
+                    wandb_writer.log({f'update-norm-expert-{key}': update_norm}, iteration)
         if args.log_memory_to_tensorboard:
             mem_stats = torch.cuda.memory_stats()
             writer.add_scalar(
@@ -1972,6 +1996,10 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
         torch.distributed.barrier()
         print_rank_0(f">>> Weight hashes match after {iteration} iterations...")
 
+    if args.log_update_norm_per_param:
+        old_params = [{name: param.clone() for name, param in model_chunk.named_parameters() if param.requires_grad} for model_chunk in model]
+    if args.log_param_norm_per_param or args.log_update_norm_per_param:
+        normalization_calculator = NormalizationCalculator(model)
     # Run training iterations till done.
     while iteration < args.train_iters:
         if args.profile and torch.distributed.get_rank() in args.profile_ranks:
@@ -2083,12 +2111,25 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
                 decoupled_learning_rate = param_group['lr']
             else:
                 learning_rate = param_group['lr']
+
+        param_norm_per_param, param_norm_per_expert = None, None
+        if args.log_param_norm_per_param:
+            param_norm_per_param, param_norm_per_expert = normalization_calculator.calc_param_l2_norm_per_param(model)
+        update_norm_per_param, update_norm_per_expert = None, None
+        if args.log_update_norm_per_param:
+            delta_params = [{name: (param - old_params[i][name]) for name, param in model_chunk.named_parameters() if param.requires_grad} for i, model_chunk in enumerate(model)]
+            update_norm_per_param, update_norm_per_expert = normalization_calculator.calc_l2_norm_list(delta_params)
+            old_params = [{name: param.clone() for name, param in model_chunk.named_parameters() if param.requires_grad} for model_chunk in model]
+
         report_memory_flag = training_log(loss_dict, total_loss_dict,
                                           learning_rate,
                                           decoupled_learning_rate,
                                           iteration, loss_scale,
                                           report_memory_flag, skipped_iter,
-                                          grad_norm, params_norm, num_zeros_in_grad)
+                                          grad_norm, params_norm, num_zeros_in_grad,
+                                          param_norm_per_param, param_norm_per_expert,
+                                          update_norm_per_param, update_norm_per_expert,
+                                          )
 
         # Evaluation.
         if args.eval_interval and iteration % args.eval_interval == 0 and \
