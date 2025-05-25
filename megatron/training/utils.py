@@ -5,6 +5,7 @@ import json
 import os
 import sys
 from datetime import datetime
+from typing import Dict, List
 
 import torch
 
@@ -209,6 +210,347 @@ def calc_params_l2_norm(model, force_create_fp32_copy=False):
 
     return norm_2.item() ** 0.5
 
+
+class NormalizationCalculator:
+    def __init__(self, model):
+        if not isinstance(model, list):
+            print("Warning: calc_params_l2_norm_per_param only support list of models")
+            model = [model]
+
+        self.sigma_model_structure = {
+            "embedding": ["word_embeddings.weight", ],
+            "output_layer": ["weight"],
+            "final_layernorm": ["weight"],
+            "decoder": ["self_attention.linear_proj.weight", 
+                      "self_attention.linear_qkv.layer_norm_weight",
+                      "self_attention.linear_qkv.weight",
+                      "mlp.linear_fc2.weight",
+                      "mlp.linear_fc1.layer_norm_weight",
+                      "mlp.linear_fc1.weight",
+                      "input_layernorm.weight",
+                      "self_attention.linear_q_proj.weight",
+                      "self_attention.linear_kv_down_proj.weight",
+                      "self_attention.linear_kv_up_proj.layer_norm_weight",
+                      "self_attention.linear_kv_up_proj.weight",
+                      "pre_mlp_layernorm.weight",
+                      "mlp.router.weight",
+                      "mlp.shared_experts.linear_fc2.weight",
+                      "mlp.shared_experts.linear_fc1.weight",
+                    ]
+        }
+
+        self.dense_param_names = []
+        self.moe_param_names = []
+        self.moe_layer_names = []
+
+        # Cache parameter shapes
+        self.param_shapes = {}
+
+        self.data_parallel_group = None
+        for model_chunk in model:
+            for i, (name, param) in enumerate(model_chunk.named_parameters()):
+                self.data_parallel_group = get_data_parallel_group_if_dtensor(param, self.data_parallel_group)
+                is_not_tp_duplicate = param_is_not_tensor_parallel_duplicate(param)
+                if not (param.requires_grad and is_not_tp_duplicate):
+                    continue
+                assert is_not_tp_duplicate
+                if not getattr(param, 'allreduce', True):
+                    assert param_is_not_shared(param)
+                    param = to_local_if_dtensor(param)
+                    self.moe_param_names.append(name)
+                else:
+                    if param_is_not_shared(param):
+                        param = to_local_if_dtensor(param)
+                        self.dense_param_names.append(name)
+
+                self.param_shapes[name] = param.shape
+
+        # Find MOE params
+        for name in self.moe_param_names:
+            moe_layer_name = name.rsplit(".", 1)[0]
+            if moe_layer_name not in self.moe_layer_names:
+                self.moe_layer_names.append(moe_layer_name)
+
+    def parse_local_layer_id(self, name):
+        if not "layers" in name:
+            return -1
+        segs = name.split(".")
+        for idx in range(len(segs)):
+            if segs[idx] == "layers":
+                break
+        return int(segs[idx+1])
+
+    def map_param_index(self, name):
+        ele = name.split('.')
+        if len(ele) > 2:
+            component = ele[2]
+            if component == "embedding":
+                return (0, 0)
+            elif component == "output_layer":
+                return (1, 0)
+            elif component == "final_layernorm":
+                return (2, 0)
+            elif component == "decoder":
+                local_layer_id = self.parse_local_layer_id(name)
+                # Work in 64 layers with 8 pipeline parallel size
+                global_layer_id = local_layer_id + mpu.get_pipeline_model_parallel_rank() * 8
+
+                weight_index = None
+                for i, suffix in enumerate(self.sigma_model_structure["decoder"]):
+                    if name.endswith(suffix):
+                        weight_index = i
+                        break
+                return (global_layer_id + 3, weight_index)
+            else:
+                print(f"Warning: {name} is not handled by map_param_index")
+                return None
+
+        else:
+            print(f"Warning: {name} is not handled by map_param_index")
+            return None
+
+    def map_moe_param_index(self, name):
+        local_layer_id = self.parse_local_layer_id(name)
+        global_layer_id = local_layer_id + mpu.get_pipeline_model_parallel_rank() * 8
+
+        return global_layer_id
+
+    def reverse_param_index(self, param_index):
+        param_types = ["embedding", "output_layer", "final_layernorm", "decoder"]
+        if param_index[0] < 3:
+            param_type = param_types[param_index[0]]
+        else:
+            param_type = "decoder"
+
+        if param_type != "decoder":
+            if param_index[1] < len(self.sigma_model_structure[param_type]):
+                return f"{param_type}.{self.sigma_model_structure[param_type][param_index[1]]}"
+            else:
+                return None
+        else:
+            if param_index[1] < len(self.sigma_model_structure["decoder"]):
+                return f"decoder.layers.{param_index[0]-3}.{self.sigma_model_structure['decoder'][param_index[1]]}"
+            else:
+                print(f"Warning: {param_index} is not handled by reverse_param_index")
+                return None
+
+    def fill_none_tensor(self, tensor_dict_list):
+        filled_tensor_dict_list = [{}]
+        all_params = {}
+        for tensor_dict in tensor_dict_list:
+            for i, (name, param) in enumerate(tensor_dict.items()):
+                if name not in all_params:
+                    all_params[name] = param
+                else:
+                    print(f"Warning: {name} already exists in all_params, skipping")
+                    pass
+
+        for name, param_shape in self.param_shapes.items():
+            if name not in all_params:
+                filled_tensor_dict_list[0][name] = torch.zeros(param_shape, dtype=torch.float32, device='cuda')
+            else:
+                filled_tensor_dict_list[0][name] = all_params[name]
+        return filled_tensor_dict_list
+
+    def build_norm_tensor(self, tensor_dict):
+        data = torch.zeros(size=(3 + 64, len(self.sigma_model_structure['decoder'])), dtype=torch.float32, device='cuda')
+
+        for i, (name, norm_2) in enumerate(tensor_dict.items()):
+            if name in self.dense_param_names:
+                index = self.map_param_index(name)
+                layer_index, weight_index = index
+                data[layer_index, weight_index] += norm_2[0]
+        return data
+
+    def reverse_norm_tensor(self, tensor):
+        data = {}
+        for i in range(tensor.shape[0]):
+            for j in range(tensor.shape[1]):
+                if tensor[i, j] > 0:
+                    name = self.reverse_param_index((i, j))
+                    if name is not None:
+                        data[name] = tensor[i, j].item()
+        return data
+
+    def build_moe_norm_tensor(self, tensor_dict):
+        data = torch.zeros(size=(64, ), dtype=torch.float32, device='cuda')
+
+        for i, (name, norm_2) in enumerate(tensor_dict.items()):
+            if name in self.moe_param_names:
+                layer_index = self.map_moe_param_index(name)
+                data[layer_index] += norm_2[0]
+        return data
+
+    def reverse_moe_param_index(self, param_index):
+        return f"decoder.layers.{param_index[0]}.experts"
+
+    def reverse_moe_norm_tensor(self, tensor):
+        data = {}
+        for i in range(tensor.shape[0]):
+            if tensor[i] > 0:
+                name = self.reverse_moe_param_index((i, 0))
+                if name is not None:
+                    data[name] = tensor[i].item()
+        return data
+
+    def build_expert_norm_tensor(self, moe_params):
+        args = get_args()
+
+        num_experts = args.num_experts
+
+        data = torch.zeros(size=(64, num_experts), dtype=torch.float32, device='cuda')
+
+        # get local expert index
+
+        num_local_experts = num_experts // mpu.get_expert_model_parallel_world_size()
+        ep_rank = mpu.get_expert_model_parallel_rank()
+        # calc expert range
+        start_expert = ep_rank * num_local_experts
+        end_expert = (ep_rank + 1) * num_local_experts
+
+
+        for i, (name, param) in enumerate(moe_params):
+            if name in self.moe_param_names:
+                layer_index = self.map_moe_param_index(name)
+                experts_param = param.view(num_local_experts, -1)
+                experts_param_data = experts_param.data.float() if args.bf16 else experts_param.data
+                moe_norm_2 = torch.square(experts_param_data).sum(dim=1)
+
+                data[layer_index, start_expert:end_expert] += moe_norm_2
+
+        return data
+
+    def reverse_expert_norm_tensor(self, tensor):
+        data = {}
+        for i in range(tensor.shape[0]):
+            for j in range(tensor.shape[1]):
+                data[f"layer{i}_expert{j}"] = tensor[i, j].item()
+        return data
+
+
+    def calc_l2_norm_list(self, tensor_dict_list: List[Dict[str, torch.Tensor]], model_parallel_group=None, reduce_dp=False):
+        """Calculate l2 norm of parameters for each param """
+        args = get_args()
+        # Seperate moe and dense params
+        dense_params = []
+        moe_params = []
+
+        if model_parallel_group is None:
+            model_parallel_group = mpu.get_model_parallel_group()
+
+        for tensor_dict in tensor_dict_list:
+            for i, (name, param) in enumerate(tensor_dict.items()):
+                if name in self.dense_param_names:
+                    dense_params.append((name, param))
+                elif name in self.moe_param_names:
+                    moe_params.append((name, param))
+
+        # Dense Params
+        dense_params_data = {}
+        dummy_overflow_buf = torch.tensor([0], dtype=torch.int, device='cuda')
+        for name, param in dense_params:
+            # Calculate dense param norm
+            norm, _ = multi_tensor_applier(
+                multi_tensor_l2norm,
+                dummy_overflow_buf,
+                [[param.data.float() if args.bf16 else param.data,],],
+                False # no per-parameter norm
+            )
+            norm_2 = norm * norm
+
+            if self.data_parallel_group is not None:
+                print(f"rank {torch.distributed.get_rank()} reduce norm {name} data parallel")
+                torch.distributed.all_reduce(norm_2,
+                                            op=torch.distributed.ReduceOp.SUM,
+                                            group=self.data_parallel_group)
+            dense_params_data[name] = norm_2
+
+        dense_params_tensor = self.build_norm_tensor(dense_params_data)
+        # Sum across all model-parallel GPUs(tensor + pipeline).
+        torch.distributed.all_reduce(
+            dense_params_tensor,
+            op=torch.distributed.ReduceOp.SUM,
+            group=model_parallel_group
+        )
+
+        if reduce_dp:
+            torch.distributed.all_reduce(
+                dense_params_tensor,
+                op=torch.distributed.ReduceOp.SUM,
+                group=mpu.get_data_parallel_group()
+            )
+
+        reduced_dense_params_data = self.reverse_norm_tensor(dense_params_tensor)
+
+        # MOE Params
+        moe_params_data = {}
+        for name, param in moe_params:
+            moe_norm, _ = multi_tensor_applier(
+                multi_tensor_l2norm,
+                dummy_overflow_buf,
+                [[param.data.float() if args.bf16 else param.data,],],
+                False # no per-parameter norm
+            )
+            moe_norm_2 = moe_norm * moe_norm
+            moe_params_data[name] = moe_norm_2
+
+        moe_params_tensor = self.build_moe_norm_tensor(moe_params_data)
+        # Sum across expert tensor, model and pipeline parallel GPUs.
+        torch.distributed.all_reduce(
+            moe_params_tensor,
+            op=torch.distributed.ReduceOp.SUM,
+            group=mpu.get_expert_tensor_model_pipeline_parallel_group(),
+        )
+
+        if reduce_dp:
+            torch.distributed.all_reduce(
+                moe_params_tensor,
+                op=torch.distributed.ReduceOp.SUM,
+                group=mpu.get_data_parallel_group()
+            )
+
+        reduced_moe_params_data = self.reverse_moe_norm_tensor(moe_params_tensor)
+
+        results = {}
+
+        for name, norm_2 in reduced_dense_params_data.items():
+            results[name] = norm_2 ** 0.5
+
+        for name, norm_2 in reduced_moe_params_data.items():
+            results[name] = norm_2 ** 0.5
+
+        expert_results = self.calc_expert_norm(moe_params, reduce_dp=reduce_dp)
+        return results, expert_results
+
+    def calc_expert_norm(self, moe_params, reduce_dp=False):
+        expert_results = {}
+        moe_data = self.build_expert_norm_tensor(moe_params)
+
+        torch.distributed.all_reduce(
+            moe_data,
+            op=torch.distributed.ReduceOp.SUM,
+            group=mpu.get_expert_tensor_model_pipeline_parallel_group())
+
+        if reduce_dp:
+            torch.distributed.all_reduce(
+                moe_data,
+                op=torch.distributed.ReduceOp.SUM,
+                group=mpu.get_data_parallel_group())
+
+        expert_results = self.reverse_expert_norm_tensor(moe_data)
+
+        for name, norm_2 in expert_results.items():
+            expert_results[name] = norm_2 ** 0.5
+        return expert_results
+
+    def calc_param_l2_norm_per_param(self, model):
+        """Calculate l2 norm of parameters for each param """
+        if not isinstance(model, list):
+            print("Warning: calc_params_l2_norm_per_param only support list of models")
+            model = [model]
+        tensor_dict_list = [dict(model_chunck.named_parameters()) for model_chunck in model]
+        return self.calc_l2_norm_list(tensor_dict_list)
+    
 
 def average_losses_across_data_parallel_group(losses):
     """Reduce a tensor of losses across all GPUs."""
