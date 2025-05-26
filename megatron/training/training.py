@@ -85,6 +85,7 @@ from megatron.core.num_microbatches_calculator import (
     update_num_microbatches)
 
 from .async_utils import maybe_finalize_async_save
+from .ckpt_utils import CkptUploadQueue
 from .utils import (
     append_to_progress_log,
     calc_params_l2_norm,
@@ -845,6 +846,9 @@ def pretrain(
     ft_integration.on_checkpointing_start()
     maybe_finalize_async_save(blocking=True, terminate=True)
     ft_integration.on_checkpointing_end(is_async_finalization=True)
+
+    if args.local_rank == 0 and args.ckpt_upload_blob_path and args.ckpt_upload_blob_sas_path:
+        CkptUploadQueue().stop()
 
     one_logger and one_logger.log_metrics({
         'app_finish_time': one_logger_utils.get_timestamp_in_ms()
