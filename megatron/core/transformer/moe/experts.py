@@ -444,6 +444,8 @@ class GroupedMLP(MegatronModule):
                                             v_start_range = max(
                                                 0, flattened_range.start - chunk_numel * local_idx
                                             )
+                        if w_start_range == -1 and v_start_range == -1:
+                            continue
                         sub_states.append(
                             {
                                 'w_tensors': ShardedTensor.from_rank_offsets_flat(
