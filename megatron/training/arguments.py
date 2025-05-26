@@ -2497,6 +2497,8 @@ def _add_moe_args(parser):
     group.add_argument('--moe-layer-recompute', action='store_true',
                        help='Enable checkpointing for moe_layer, should be used when memory is not sufficient. '
                        'Deprecated. Use "--recompute-granularity selective --recompute-modules moe" instead.')
+    group.add_argument('--moe-layer-recompute-freq', type=moe_freq_type, default=1,
+                       help='Frequency to enable MoE layer recompute.')
     group.add_argument('--moe-extended-tp', action='store_true',
                        help='Deprecated. Use --expert-tensor-parallel-size instead.')
     group.add_argument('--moe-use-upcycling', action='store_true',
