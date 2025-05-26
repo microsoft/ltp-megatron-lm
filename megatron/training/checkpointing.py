@@ -1158,6 +1158,34 @@ def load_args_from_checkpoint(
     return args, checkpoint_args
 
 
+def get_args_from_checkpoint(
+    args, load_arg='load', checkpointing_context=None
+):
+    """Get arguments from the checkpoint specified in the
+    arguments.
+    """
+    load_dir = getattr(args, load_arg)
+
+    if load_dir is None:
+        print_rank_0('No load directory specified.')
+        return None
+
+    state_dict, _, _, _ = _load_base_checkpoint(
+        load_dir,
+        args,
+        rank0=True,
+        checkpointing_context=checkpointing_context,
+    )
+
+    if not state_dict or 'args' not in state_dict:
+        print_rank_0('No arguments found in checkpoint.')
+        return None
+
+    checkpoint_args = state_dict['args']
+    setattr(checkpoint_args, 'checkpoint_iteration', state_dict['iteration'])
+    return checkpoint_args
+
+
 def fix_fp8_params_lose_precision_when_loading_dist_ckpt(state_dict):
     """
     When "--fp8-param-gather" and "--use-dist-ckpt" are both enabled, the state dict read from
