@@ -1764,6 +1764,8 @@ def _add_training_args(parser):
                        help='Training step interval to trigger manual garbage '
                        'collection. When the value is set to 0, garbage '
                        'collection is not triggered between training steps.')
+    group.add_argument('--manual-gc-after-checkpoint-interval', type=int, default=0,
+                       help='The interval to trigger manual GC after saving checkpoint, 0 to disable.')
     group.add_argument('--no-manual-gc-eval', action='store_false',
                        help='When using manual garbage collection, disable '
                        'garbage collection at the start and the end of each '
