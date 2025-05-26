@@ -12,6 +12,7 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.moe.moe_utils import (
     MoEAuxLossAutoScaler,
     save_to_aux_losses_tracker,
+    save_to_tokens_per_expert_tracker,
     sequence_load_balancing_loss_func,
     global_batch_load_balancing_loss_func,
     sinkhorn,
@@ -325,6 +326,13 @@ class TopKRouter(Router):
             probs = self.apply_load_balancing_loss(
                 activation=probs, load_balancing_loss_func=aux_loss_func
             )
+
+            save_to_tokens_per_expert_tracker(
+                "global_batch_tokens_per_expert",
+                tokens_per_expert,
+                self.layer_number,
+                self.config.num_layers,
+                reduce_group=parallel_state.get_data_parallel_group())
 
         return probs, routing_map
 
