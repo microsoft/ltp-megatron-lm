@@ -1318,6 +1318,9 @@ def _add_network_size_args(parser):
                        'We compute the average of the MTP losses across all depths, '
                        'and multiply it the scaling factor to obtain the overall MTP loss, '
                        'which serves as an additional training objective.')
+    group.add_argument('--cross-entropy-label-smoothing', type=float, default=0,
+                       help='Smoothing factor for vocab_parallel_cross_entropy, must be in range [0.0, 1.0). '
+                       'Default is no smoothing (=0.0).')
     return parser
 
 
