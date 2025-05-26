@@ -1513,8 +1513,10 @@ def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_r
     if args.num_experts is not None:
         moe_loss_scale = 1 / get_num_microbatches()
         track_names = []
-        if args.moe_router_load_balancing_type in ["aux_loss", "seq_aux_loss"]:
+        if args.moe_router_load_balancing_type in ["aux_loss", "seq_aux_loss", "global_batch_loss"]:
             track_names.append("load_balancing_loss")
+            if args.moe_router_load_balancing_type == "global_batch_loss":
+                track_names.append("global_batch_tokens_per_expert")
         if args.moe_z_loss_coeff is not None:
             track_names.append("z_loss")
         track_moe_metrics(
