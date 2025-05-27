@@ -967,6 +967,10 @@ def validate_args(args, defaults={}):
             + f"The supported position embedding types are rope and none."
         )
 
+    # Logging.
+    if args.log_grad_norm_per_layer:
+        assert not args.use_torch_fsdp2 and not args.use_custom_fsdp, "Per-layer grad norm logging only supports DistributedDataParallel."
+
     # Print arguments.
     _print_args("arguments", args)
 
@@ -1406,6 +1410,12 @@ def _add_logging_args(parser):
                        help='If set, log progress (in terms of number of processed tokens and '
                        'number of floating-point operations) to progress.txt file in checkpoint '
                        'directory.')
+    group.add_argument('--log-grad-norm-per-layer', action='store_true',
+                       help='If set, calculate and log per-layer gradient norm.')
+    group.add_argument('--log-grad-norm-per-layer-extra-patterns',
+                       nargs='*', type=str, default=[],
+                       help='For per-layer gradient norm logging, naming patterns of extra weights '
+                       'that don\'t belong to any layer.')
     group.add_argument('--timing-log-level', type=int,
                        default=0, choices=range(0,3),
                        help='Granularity level to measure and report timing. '
