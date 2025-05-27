@@ -170,6 +170,9 @@ class TransformerConfig(ModelParallelConfig):
     training of very large models. This feature is only works when custom fsdp is turned on.
     """
 
+    use_kaiming_init_for_moe_router: bool = False
+    """Use Kaiming initialization for MoE router weights."""
+
     ####################
     # mixed-precision
     ####################

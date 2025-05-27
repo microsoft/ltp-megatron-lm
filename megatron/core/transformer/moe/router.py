@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from functools import partial
 from typing import Callable
 
+import math
 import torch
 
 from megatron.core import parallel_state
@@ -45,7 +46,10 @@ class Router(ABC, MegatronModule):
             torch.empty((self.config.num_moe_experts, self.config.hidden_size), dtype=torch.float32)
         )
         if config.perform_initialization:
-            config.init_method(self.weight)
+            if config.use_kaiming_init_for_moe_router:
+                torch.nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+            else:
+                config.init_method(self.weight)
         self.weight.data = self.weight.data.to(dtype=config.params_dtype)
         setattr(self.weight, 'sequence_parallel', config.sequence_parallel)
         # If calculate per token loss, we need to scale up moe aux loss by the number of tokens.

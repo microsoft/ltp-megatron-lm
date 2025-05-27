@@ -1827,6 +1827,8 @@ def _add_initialization_args(parser):
     group.add_argument('--output-layer-init-method-normal-std', type=float, default=0.02,
                        help='Standard deviation of the zero mean normal '
                        'distribution used for weight initialization for output layers.')
+    group.add_argument('--use-kaiming-init-for-moe-router', action='store_true',
+                       help='Use Kaiming initialization for MoE router weights.')
 
     return parser
 
