@@ -407,7 +407,7 @@ def append_to_progress_log(string, barrier=True):
     progress_log_filename = os.path.join(args.save, "progress.txt")
     if barrier:
         torch.distributed.barrier()
-    if torch.distributed.get_rank() == 0:
+    if torch.distributed.get_rank() == 0 or args.ckpt_isolated_save and args.local_rank == 0:
         with open(progress_log_filename, 'a') as f:
             job_id = os.getenv('SLURM_JOB_ID', '')
             num_gpus = args.world_size
