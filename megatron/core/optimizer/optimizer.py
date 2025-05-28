@@ -14,6 +14,7 @@ import torch
 from megatron.core.transformer.transformer_layer import get_transformer_layer_offset
 from megatron.training import get_args
 from megatron.training.arguments import core_transformer_config_from_args
+from megatron.training.utils import NormalizationCalculator
 
 try:
     from transformer_engine.pytorch.optimizers import multi_tensor_applier, multi_tensor_scale
@@ -156,6 +157,24 @@ class MegatronOptimizer(ABC):
 
         return grads_for_norm
 
+    def find_grad_for_param(self, param: torch.nn.Parameter, model_chunk: Any) -> Optional[torch.Tensor]:
+        # Find grad for param
+        grad_found = False
+        result = []
+        for buffers in [model_chunk.buffers, model_chunk.expert_parallel_buffers]:
+            for buffer in buffers:
+                if param in buffer.param_to_bucket:
+                    bucket = buffer.param_to_bucket[param]
+                    grad_data = bucket.grad_data
+                    param_start_index, param_end_index, _ = buffer.param_index_map[param]
+                    grad = grad_data[param_start_index - bucket.offset : param_end_index - bucket.offset]
+                    result.append(grad)
+                    grad_found = True
+                    break
+            if grad_found:
+                break
+        return result
+
     def get_main_grads_for_grad_norm_per_layer(self) -> Dict[Union[int, str], List[torch.Tensor]]:
         """
         Get per-layer main_grads that should be taken into account to compute the grad norm.
@@ -191,23 +210,51 @@ class MegatronOptimizer(ABC):
 
                     if global_layer_id not in self.grads_for_norm_per_layer:
                         self.grads_for_norm_per_layer[global_layer_id] = []
-
-                    # Find grad for param
-                    grad_found = False
-                    for buffers in [model_chunk.buffers, model_chunk.expert_parallel_buffers]:
-                        for buffer in buffers:
-                            if param in buffer.param_to_bucket:
-                                bucket = buffer.param_to_bucket[param]
-                                grad_data = bucket.grad_data
-                                param_start_index, param_end_index, _ = buffer.param_index_map[param]
-                                grad = grad_data[param_start_index - bucket.offset : param_end_index - bucket.offset]
-                                self.grads_for_norm_per_layer[global_layer_id].append(grad)
-                                grad_found = True
-                                break
-                        if grad_found:
-                            break
+                    self.grads_for_norm_per_layer[global_layer_id].extend(self.find_grad_for_param(param, model_chunk))
 
         return self.grads_for_norm_per_layer
+
+    def get_main_grads_for_grad_norm_per_param(self) -> Dict[Union[int, str], List[torch.Tensor]]:
+        """
+        Get per-layer main_grads that should be taken into account to compute the grad norm.
+        Currently only support DistributedDataParallel (DDP).
+        """
+        if not hasattr(self, 'grads_for_norm_per_param'):
+            self.grads_for_norm_per_param = {}
+
+            args = get_args()
+            transformer_config = core_transformer_config_from_args(args)
+            global_layer_offset = get_transformer_layer_offset(transformer_config)
+
+            if isinstance(self, ChainedOptimizer):
+                model_chunks = self.model_chunks
+            else:
+                model_chunks = self.optimizer.model_chunks
+
+            for model_chunk in model_chunks:
+                named_parameters = model_chunk.named_parameters()
+
+                for name, param in named_parameters:
+                    # Find global_layer_id for param
+                    if 'layers' in name:
+                        name_segments = name.split('.')
+                        local_layer_id = None
+                        layer_id_idx = None
+                        for idx, param_name_segment in enumerate(name_segments):
+                            if param_name_segment == 'layers':
+                                local_layer_id = int(name_segments[idx + 1])
+                                layer_id_idx = idx + 1
+                                break
+                        global_layer_id = global_layer_offset + local_layer_id
+                        global_name = '.'.join(name_segments[:layer_id_idx] + [str(global_layer_id)] + name_segments[layer_id_idx + 1:])
+                    else:
+                        global_name = name
+
+                    if global_name not in self.grads_for_norm_per_param:
+                        self.grads_for_norm_per_param[global_name] = []
+                    self.grads_for_norm_per_param[global_name].extend(self.find_grad_for_param(param, model_chunk))
+
+        return self.grads_for_norm_per_param
 
     def get_grad_stats_parallel_group(self) -> torch.distributed.ProcessGroup:
         """Process group for reducing gradient statistics (num_zeros & norm).
@@ -280,6 +327,17 @@ class MegatronOptimizer(ABC):
         for idx, pattern in enumerate(extra_patterns):
             total_norm_dict[pattern] = total_norm_per_layer_cuda[args.num_layers + idx].item()
         return total_norm_dict
+
+    def get_grad_norm_per_param(self):
+        """Compute and return per-layer grad norm."""
+        grads_for_norm_per_param = self.get_main_grads_for_grad_norm_per_param()
+
+        args = get_args()
+        transformer_config = core_transformer_config_from_args(args)
+        global_layer_offset = get_transformer_layer_offset(transformer_config)
+        normalization_calculator = NormalizationCalculator(self.model_chunks, global_layer_offset)
+        param_results, expert_results = normalization_calculator.calc_l2_norm_list([grads_for_norm_per_param,], model_parallel_group=self.get_grad_stats_parallel_group(), reduce_dp=True)
+        return param_results, expert_results
 
     def clip_grad_norm(self, clip_grad: float) -> float:
         """Compute and return grad norm, also clip grads."""

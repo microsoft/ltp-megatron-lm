@@ -1347,7 +1347,8 @@ def train_step(forward_step_func, data_iterator,
 
 def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_rate, iteration,
                  loss_scale, report_memory_flag, skipped_iter,
-                 grad_norm, params_norm, num_zeros_in_grad, grad_norm_per_layer=None):
+                 grad_norm, params_norm, num_zeros_in_grad, 
+                 grad_norm_per_layer=None, grad_norm_per_param=None, grad_norm_per_expert=None):
     """Log training information such as losses, timing, ...."""
     args = get_args()
     timers = get_timers()
@@ -1479,6 +1480,24 @@ def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_r
         if grad_norm_per_layer is not None:
             for key in grad_norm_per_layer:
                 grad_norm_value = grad_norm_per_layer[key]
+                writer.add_scalar(f'grad-norm-{key}', grad_norm_value, iteration)
+                writer.add_scalar(f'grad-norm-{key} vs samples', grad_norm_value,
+                                  args.consumed_train_samples)
+                if wandb_writer:
+                    wandb_writer.log({f'grad-norm-{key}': grad_norm_value}, iteration)
+                    wandb_writer.log({f'grad-norm-with-scale-{key}': grad_norm_value * loss_scale}, iteration)
+        if grad_norm_per_param is not None:
+            for key in grad_norm_per_param:
+                grad_norm_value = grad_norm_per_param[key]
+                writer.add_scalar(f'grad-norm-{key}', grad_norm_value, iteration)
+                writer.add_scalar(f'grad-norm-{key} vs samples', grad_norm_value,
+                                  args.consumed_train_samples)
+                if wandb_writer:
+                    wandb_writer.log({f'grad-norm-{key}': grad_norm_value}, iteration)
+                    wandb_writer.log({f'grad-norm-with-scale-{key}': grad_norm_value * loss_scale}, iteration)
+        if grad_norm_per_expert is not None:
+            for key in grad_norm_per_expert:
+                grad_norm_value = grad_norm_per_expert[key]
                 writer.add_scalar(f'grad-norm-{key}', grad_norm_value, iteration)
                 writer.add_scalar(f'grad-norm-{key} vs samples', grad_norm_value,
                                   args.consumed_train_samples)
@@ -2095,13 +2114,18 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
         grad_norm_per_layer = None
         if args.log_grad_norm_per_layer:
             grad_norm_per_layer = optimizer.get_grad_norm_per_layer()
+        grad_norm_per_param = None
+        if args.log_grad_norm_per_param:
+            grad_norm_per_param, grad_norm_per_expert = optimizer.get_grad_norm_per_param()
         report_memory_flag = training_log(loss_dict, total_loss_dict,
                                           learning_rate,
                                           decoupled_learning_rate,
                                           iteration, loss_scale,
                                           report_memory_flag, skipped_iter,
                                           grad_norm, params_norm, num_zeros_in_grad,
-                                          grad_norm_per_layer=grad_norm_per_layer)
+                                          grad_norm_per_layer=grad_norm_per_layer,
+                                          grad_norm_per_param=grad_norm_per_param,
+                                          grad_norm_per_expert=grad_norm_per_expert,)
 
         # Evaluation.
         if args.eval_interval and iteration % args.eval_interval == 0 and \
