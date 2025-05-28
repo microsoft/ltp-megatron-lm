@@ -552,6 +552,9 @@ class TransformerConfig(ModelParallelConfig):
     mamba_num_groups: int = 8
     """The number of groups used in Mamba layers."""
 
+    heterogeneous_block_specs: bool = False
+    """Whether to use heterogeneous block specs (nemotron-nas architecture)."""
+
     def _is_split_valid(self, stage, layers_split, num_layers, vp_size):
         if not isinstance(layers_split, list):
             raise ValueError(
@@ -576,9 +579,6 @@ class TransformerConfig(ModelParallelConfig):
                 f'decoder_{stage}_pipeline_num_layers={num_layers}'
             )
         return True
-
-    heterogeneous_block_specs: bool = False
-    """Whether to use heterogeneous block specs (nemotron-nas architecture)."""
 
     def _split_pipeline_stage(self, stage, num_layers, vp_size):
         quotient = num_layers // vp_size
