@@ -1,19 +1,35 @@
 name: Model Test
 
 on:
-  [push, pull_request]:
+  push:
     branches:
-      - dev
-      - canary/*
-      - release/*
+    - dev
+    - canary/*
+    - release/*
+  pull_request:
+    branches:
+    - dev
+    - canary/*
+    - release/*
+  release:
+    types:
+    - published
 
 jobs:
-  build:
+  model-test:
+    name: Model Test
     runs-on: model-test
+    timeout-minutes: 3600
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
     steps:
-      - name: checkout-repo
+      - name: Checkout
         uses: actions/checkout@v3
-
-      - name: list-repo
+      - name: List Repo
         run: |
           ls .
+      - name: List Home
+        run: |
+          echo ${HOME}
