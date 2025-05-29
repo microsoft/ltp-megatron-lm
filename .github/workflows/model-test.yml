@@ -1,0 +1,19 @@
+name: Model 
+
+on:
+  push:
+    branches:
+      - dev
+      - canary/*
+      - release/*
+
+jobs:
+  build:
+    runs-on: model-test
+    steps:
+      - name: checkout-repo
+        uses: actions/checkout@v3
+
+      - name: list-repo
+        run: |
+          ls .
