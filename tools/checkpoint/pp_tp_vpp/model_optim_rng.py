@@ -3,60 +3,65 @@ import logging
 from collections import OrderedDict
 
 from utils import (
+    RetainLogLevel,
     log_and_exit,
     get_folder_name,
     get_vpp_source_position,
     MODEL_OPTIM_RNG_FILENAME,
+    CKPTContext,
+    get_num_layers_for_this_vstage,
 )
 
 import torch
 
 logger = logging.getLogger(__name__)
 
-def _convert_state_dict_args(args, target_pp_rank, target_ep_rank, state_dict):
+def _convert_state_dict_args(args, target_pp_rank, target_ep_rank, state_dict, ckpt_ctx):
     state_dict_args = state_dict["args"]
-    if args.target_virtual_pipeline_model_parallel_size <= 1:
-        log_and_exit(f"target_virtual_pipeline_model_parallel_size {args.target_virtual_pipeline_model_parallel_size} is smaller or equal to 1")
-
-    if state_dict_args.tensor_model_parallel_size != 1:
-        log_and_exit("currently only tensor_model_parallel_size=1 is supported, but found {} in checkpoint".format(
-            state_dict_args.tensor_model_parallel_size))
-    if args.expert_model_parallel_size != state_dict_args.expert_model_parallel_size:
-        log_and_exit("expert_model_parallel_size in args does not match the one in checkpoint, {} vs {}".format(
-            args.expert_model_parallel_size, state_dict_args.expert_model_parallel_size))
-    if args.pipeline_model_parallel_size != state_dict_args.pipeline_model_parallel_size:
-        log_and_exit("pipeline_model_parallel_size in args does not match the one in checkpoint, {} vs {}".format(
-            args.pipeline_model_parallel_size, state_dict_args.pipeline_model_parallel_size))
-        
-    if state_dict_args.num_layers and \
-        state_dict_args.num_layers % (args.pipeline_model_parallel_size * args.target_virtual_pipeline_model_parallel_size) != 0:
-        log_and_exit("num_layers can not be evenly divided pipeline_model_parallel_size*target_virtual_pipeline_model_parallel_size, "
-            "num_layers={}, pipeline_model_parallel_size={}, target_virtual_pipeline_model_parallel_size={}".format(
-                state_dict_args.num_layers, args.pipeline_model_parallel_size, args.target_virtual_pipeline_model_parallel_size))
-    
-    # args
-    state_dict_args.num_virtual_stages_per_pipeline_rank = args.target_virtual_pipeline_model_parallel_size
-    state_dict_args.virtual_pipeline_model_parallel_size = args.target_virtual_pipeline_model_parallel_size
+    if ckpt_ctx.uneven_mode:
+        state_dict_args.decoder_first_pipeline_num_layers_split = ckpt_ctx.first_vpp_layer_split
+        state_dict_args.decoder_last_pipeline_num_layers_split = ckpt_ctx.last_vpp_layer_split
+ 
+    state_dict_args.num_virtual_stages_per_pipeline_rank = ckpt_ctx.vpp_size
+    state_dict_args.virtual_pipeline_model_parallel_size = ckpt_ctx.vpp_size
     state_dict_args.overlap_p2p_comm = True
     state_dict_args.align_param_gather = True
+    if hasattr(state_dict_args, "local_rank"):
+        delattr(state_dict_args, "local_rank")
+    if hasattr(state_dict_args, "rank"):
+        delattr(state_dict_args, "rank")
 
-def _convert_state_dict_optimizer(args, target_pp_rank, target_ep_rank, state_dict):
-    # TODO (optimizer state)
-    # suggest to reinitialize optimizer and do not load state_dict from checkpoint
-    #del state_dict["optimizer"]
+def _convert_state_dict_optimizer(args, target_pp_rank, target_ep_rank, state_dict, ckpt_ctx):
+    # optimizer state dict is equal
+    # TODO : step
+    optimizer_states = state_dict["optimizer"]
+    try:
+        current_step = -1
+        param_group_cadidates = []
+        for opt_state in optimizer_states:
+            for param_group in opt_state["optimizer"]["param_groups"]:
+                if "step" in param_group:
+                    current_step = param_group["step"]
+                else:
+                    param_group_cadidates.append(param_group)
+        if current_step != -1:
+            for param_group in param_group_cadidates:
+                param_group["step"] = current_step
+                logger.info(f"add step={current_step} in optimizer state")
+    except Exception:
+        logger.warning("add step to optimizer state failed")
+
+def _convert_state_dict_rng(args, target_pp_rank, target_ep_rank, state_dict, ckpt_ctx):
+    # rng state is equal
     pass
 
-def _convert_state_dict_rng(args, target_pp_rank, target_ep_rank, state_dict):
-    # TODO
-    # further check rng state is equal
-    pass
-
-def _fetch_model_state_dict(args, src_pp_rank, src_ep_rank, src_start_layer_idx, num_layers_per_virtual_stage):
+def _fetch_model_state_dict(args, src_pp_rank, src_ep_rank, src_start_layer_idx, num_layers_for_this_virtual_stage):
     src_folder_path = os.path.join(args.load_iteration_dir, get_folder_name(args, src_pp_rank, src_ep_rank))
     src_file_path = os.path.join(src_folder_path, MODEL_OPTIM_RNG_FILENAME)
 
     #logger.debug(f"loading {src_file_path} to fetch source tensors in virtual stage...")
-    state_dict = torch.load(src_file_path, map_location="cpu", weights_only=False)
+    with RetainLogLevel():
+        state_dict = torch.load(src_file_path, map_location="cpu", weights_only=False)
     state_dict_model = state_dict["model"]
 
     layer_idx_added = set()
@@ -65,24 +70,25 @@ def _fetch_model_state_dict(args, src_pp_rank, src_ep_rank, src_start_layer_idx,
         if not ".layers." in k:
             continue
         layer_idx = int(k.split(".layers.")[1].split(".")[0])
-        if src_start_layer_idx <= layer_idx < src_start_layer_idx+num_layers_per_virtual_stage:
+        if src_start_layer_idx <= layer_idx < src_start_layer_idx+num_layers_for_this_virtual_stage:
             new_key = k.replace(f".layers.{layer_idx}", f".layers.{layer_idx-src_start_layer_idx}")
             outputs[new_key] = v.clone().detach() if torch.is_tensor(v) else v
             layer_idx_added.add(layer_idx)
-
-    assert len(layer_idx_added) == num_layers_per_virtual_stage, \
-        "size of layer_idx_added does not equal to num_layers_per_virtual_stage, " \
-        "{} vs {}".format(len(layer_idx_added), num_layers_per_virtual_stage)
+    
+    # TODO
+    # Currently, arbitrary layer partitioning is not supported, so I add a double-check assert here.
+    # If not supported, an error will be raised at this point.
+    assert len(layer_idx_added) == num_layers_for_this_virtual_stage, \
+        "size of layer_idx_added does not equal to num_layers_for_this_virtual_stage, " \
+        "{} vs {} ,".format(len(layer_idx_added), num_layers_for_this_virtual_stage) + \
+        "src_pp_rank={}, src_ep_rank={}, src_start_layer_idx={}, num_layers_for_this_virtual_stage={}".format(
+            src_pp_rank, src_ep_rank, src_start_layer_idx, num_layers_for_this_virtual_stage)
+    
     return outputs
 
-def _convert_state_dict_model(args, target_pp_rank, target_ep_rank, state_dict):
+def _convert_state_dict_model(args, target_pp_rank, target_ep_rank, state_dict, ckpt_ctx):
     state_dict_model = state_dict["model"]
-
-    num_virtual_stages = args.target_virtual_pipeline_model_parallel_size
-    num_layers_per_virtual_stage = state_dict["args"].num_layers \
-        // (args.pipeline_model_parallel_size * args.target_virtual_pipeline_model_parallel_size)
-
-    vmodels = [OrderedDict() for i in range(num_virtual_stages)]
+    vmodels = [OrderedDict() for i in range(ckpt_ctx.vpp_size)]
 
     for (vidx, vmodel) in enumerate(vmodels):
         if target_pp_rank == 0 and vidx == 0:
@@ -93,20 +99,23 @@ def _convert_state_dict_model(args, target_pp_rank, target_ep_rank, state_dict):
         src_pp_rank, src_start_layer_idx = get_vpp_source_position(
             target_pp_rank,
             vidx,
-            args.pipeline_model_parallel_size,
-            num_virtual_stages,
-            num_layers_per_virtual_stage)
+            ckpt_ctx)
         
-        src_model_state_dict = _fetch_model_state_dict(args, src_pp_rank, target_ep_rank,
-            src_start_layer_idx, num_layers_per_virtual_stage)
+        num_layers_for_this_virtual_stage = get_num_layers_for_this_vstage(target_pp_rank, vidx, ckpt_ctx)
+        src_model_state_dict = _fetch_model_state_dict(
+            args,
+            src_pp_rank,
+            target_ep_rank,
+            src_start_layer_idx,
+            num_layers_for_this_virtual_stage)
         vmodel.update(src_model_state_dict)
 
-        if target_pp_rank == args.pipeline_model_parallel_size-1 and vidx == num_virtual_stages-1:
+        if target_pp_rank == ckpt_ctx.pp_size-1 and vidx == ckpt_ctx.vpp_size-1:
             for (k, v) in state_dict_model.items():
                 if "final_layernorm." in k or k.startswith("output_layer."):
                     vmodel[k] = v.clone().detach() if torch.is_tensor(v) else v
     
-    for i in range(num_virtual_stages):
+    for i in range(ckpt_ctx.vpp_size):
         state_dict[f"model{i}"] = vmodels[i]
 
     del state_dict["model"]
@@ -116,17 +125,22 @@ def convert_model_optim_rng(args, target_pp_rank, target_ep_rank):
     src_file_path = os.path.join(src_folder_path, MODEL_OPTIM_RNG_FILENAME)
 
     logger.info(f"loading model_optim_rng from {src_file_path} ...")
-    target_state_dict = torch.load(src_file_path, map_location="cpu", weights_only=False)
+    with RetainLogLevel():
+        target_state_dict = torch.load(src_file_path, map_location="cpu", weights_only=False)
+
     if target_pp_rank==0 and target_ep_rank<=1:
         logger.info("[pp_rank=0][ep_rank={}] keys of model state dict : {}\n".format(target_ep_rank, target_state_dict.keys()))
 
-    _convert_state_dict_args(args, target_pp_rank, target_ep_rank, target_state_dict)
+    ckpt_ctx = CKPTContext()
+    ckpt_ctx.check_args_and_fill(args, target_state_dict)
 
-    _convert_state_dict_optimizer(args, target_pp_rank, target_ep_rank, target_state_dict)
+    _convert_state_dict_args(args, target_pp_rank, target_ep_rank, target_state_dict, ckpt_ctx)
 
-    _convert_state_dict_rng(args, target_pp_rank, target_ep_rank, target_state_dict)
+    _convert_state_dict_optimizer(args, target_pp_rank, target_ep_rank, target_state_dict, ckpt_ctx)
 
-    _convert_state_dict_model(args, target_pp_rank, target_ep_rank, target_state_dict)
+    _convert_state_dict_rng(args, target_pp_rank, target_ep_rank, target_state_dict, ckpt_ctx)
+
+    _convert_state_dict_model(args, target_pp_rank, target_ep_rank, target_state_dict, ckpt_ctx)
 
     # save
     target_folder_path = os.path.join(args.save_iteration_dir, get_folder_name(args, target_pp_rank, target_ep_rank))
@@ -136,4 +150,4 @@ def convert_model_optim_rng(args, target_pp_rank, target_ep_rank):
     logger.info(f"saving model_optim_rng to {target_file_path} ...")
     torch.save(target_state_dict, target_file_path)
 
-    return target_state_dict
+    return (target_state_dict, ckpt_ctx)

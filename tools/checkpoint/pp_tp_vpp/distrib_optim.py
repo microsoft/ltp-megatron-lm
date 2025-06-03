@@ -2,30 +2,34 @@ import os
 import logging
 
 from utils import (
+    RetainLogLevel,
     log_and_exit,
     get_folder_name,
     get_vpp_source_position,
     MODEL_OPTIM_RNG_FILENAME,
     DISTRIB_OPTIM_FILENAME,
+    get_num_layers_for_this_vstage,
 )
 
 import torch
 
 logger = logging.getLogger(__name__)
 
-def _fetch_opt_parameters(args,
+def _fetch_opt_parameters(
+        args,
         src_pp_rank,
         src_ep_rank,
         src_start_layer_idx,
-        num_layers_per_virtual_stage,
+        num_layers_for_this_virtual_stage,
         count_dense : bool,
         count_experts : bool):
     src_folder_path = os.path.join(args.load_iteration_dir, get_folder_name(args, src_pp_rank, src_ep_rank))
     src_model_opt_rng_path = os.path.join(src_folder_path, MODEL_OPTIM_RNG_FILENAME)
     src_distrib_optim_path = os.path.join(src_folder_path, DISTRIB_OPTIM_FILENAME)
-
-    state_dict_model = torch.load(src_model_opt_rng_path, map_location="cpu", weights_only=False)["model"]
-    state_dict_disopts = torch.load(src_distrib_optim_path, map_location="cpu", weights_only=False)
+    
+    with RetainLogLevel():
+        state_dict_model = torch.load(src_model_opt_rng_path, map_location="cpu", weights_only=False)["model"]
+    state_dict_disopts = torch.load(src_distrib_optim_path, map_location="cpu")
     if not isinstance(state_dict_disopts, list):
         state_dict_disopts = [state_dict_disopts]
 
@@ -41,24 +45,29 @@ def _fetch_opt_parameters(args,
 
     current_offset = 0
     start_offset, end_offset = -1, -1
+    upper_bound_layer_idx = -1 # variable for double-check
     for (k, v) in state_dict_model.items():
         if not hasattr(v, "nelement"):
             continue
         if "router.expert_bias" in k:
-            continue
-        if ".layer_idx" in k:
-            # added for debug
+            # in Megatron-LM
+            # router.expert_bias is initialized by calling register_buffer
             continue
         if not ".layers." in k:
             if start_offset != -1:
                 end_offset = current_offset
+                upper_bound_layer_idx += 1
                 break
             current_offset += v.nelement() if count_dense else 0
             continue
         layer_idx = int(k.split(".layers.")[1].split(".")[0])
+
+        assert layer_idx >= upper_bound_layer_idx, "layer_idx stored unordered in checkpoint"
+        upper_bound_layer_idx = layer_idx
+
         if layer_idx == src_start_layer_idx and start_offset == -1:
             start_offset = current_offset
-        if layer_idx == src_start_layer_idx+num_layers_per_virtual_stage \
+        if layer_idx == src_start_layer_idx + num_layers_for_this_virtual_stage \
             and start_offset != -1:
             end_offset = current_offset
             break
@@ -69,6 +78,9 @@ def _fetch_opt_parameters(args,
     assert start_offset != -1
     if end_offset == -1:
         end_offset = current_offset
+        upper_bound_layer_idx += 1
+    assert upper_bound_layer_idx - src_start_layer_idx == num_layers_for_this_virtual_stage, \
+        "layer idx double-check failed"
 
     opt_parameters_dict = next(iter(state_dict_disopt[0].values()))
     (param_part, exp_avg_part, exp_avg_sq_part) = (
@@ -80,26 +92,23 @@ def _fetch_opt_parameters(args,
         "count_dense={}, count_experts={}, num_elements_in_param_part={}".format(count_dense, count_experts, param_part.nelement()))
     return (param_part, exp_avg_part, exp_avg_sq_part)
 
-def convert_distrib_optim(args, target_pp_rank, target_ep_rank, target_model_state_dict):
+def convert_distrib_optim(args, target_pp_rank, target_ep_rank, target_model_state_dict, ckpt_ctx):
     src_folder_path = os.path.join(args.load_iteration_dir, get_folder_name(args, target_pp_rank, target_ep_rank))
     src_file_path = os.path.join(src_folder_path, DISTRIB_OPTIM_FILENAME)
 
     logger.info(f"loading distrib_optim state dict {src_file_path} ...")
-    target_disopt_state_dicts = torch.load(src_file_path, map_location="cpu", weights_only=False)
+    target_disopt_state_dicts = torch.load(src_file_path, map_location="cpu")
     
     if not isinstance(target_disopt_state_dicts, list):
         logger.info("target_disopt_state_dicts is not a list, pp_size={}, ep_size={}, pp_rank={}, ep_rank={}".format(
-            args.pipeline_model_parallel_size,
-            args.expert_model_parallel_size,
+            ckpt_ctx.pp_size,
+            ckpt_ctx.ep_size,
             target_pp_rank,
             target_ep_rank))
         target_disopt_state_dicts = [target_disopt_state_dicts]
     else:
         logger.info("length of target_disopt_state_dicts : {}".format(len(target_disopt_state_dicts)))
 
-    num_virtual_stages = args.target_virtual_pipeline_model_parallel_size
-    num_layers_per_virtual_stage = target_model_state_dict["args"].num_layers \
-        // (args.pipeline_model_parallel_size * args.target_virtual_pipeline_model_parallel_size)
     """
     in distrib_optim.pt
     for ep=1, len(target_disopt_state_dicts) is always 1 containing all parameters
@@ -128,9 +137,19 @@ def convert_distrib_optim(args, target_pp_rank, target_ep_rank, target_model_sta
                 target_ep_rank, i, opt_parameters_dict.keys()))
             
         vdisopts = []
-        for vidx in range(num_virtual_stages):
+        for vidx in range(ckpt_ctx.vpp_size):
             """
             value in opt_parameters_dict are flatened tensors and were saved in reverse order compare to model state_dict
+            for example:
+                model_ordered_state_dict(key-tensor pair) : {
+                    k1 : t1,
+                    k2 : t2,
+                    k3 : t3,
+                    ...
+                    kn : tn
+                }
+                opt_parameters_dict["param"] : [tn, ... t3, t2, t1]
+                opt_parameters_dict["exp_avg"] : [tn, ... t3, t2, t1]
             """
             num_elements_in_vmodel = 0
             vmodel_dict = target_model_state_dict[f"model{vidx}"]
@@ -142,8 +161,8 @@ def convert_distrib_optim(args, target_pp_rank, target_ep_rank, target_model_sta
             }
 
             # final_layernorm and output_layer
-            if target_pp_rank == args.pipeline_model_parallel_size-1 \
-                and vidx == num_virtual_stages-1 \
+            if target_pp_rank == ckpt_ctx.pp_size - 1 \
+                and vidx == ckpt_ctx.vpp_size - 1 \
                 and i == 0:
                 num_elements_tail = 0
                 for (k, v) in reversed(vmodel_dict.items()):
@@ -167,15 +186,14 @@ def convert_distrib_optim(args, target_pp_rank, target_ep_rank, target_model_sta
             src_pp_rank, src_start_layer_idx = get_vpp_source_position(
                 target_pp_rank,
                 vidx,
-                args.pipeline_model_parallel_size,
-                num_virtual_stages,
-                num_layers_per_virtual_stage)
+                ckpt_ctx)
+            num_layers_for_this_virtual_stage = get_num_layers_for_this_vstage(target_pp_rank, vidx, ckpt_ctx)
             param_part, exp_avg_part, exp_avg_sq_part = _fetch_opt_parameters(
                 args,
                 src_pp_rank,
                 target_ep_rank,
                 src_start_layer_idx,
-                num_layers_per_virtual_stage,
+                num_layers_for_this_virtual_stage,
                 i==0,
                 i>0 or len(target_disopt_state_dicts)==1)
             new_parameters_dict["param"] = torch.cat((new_parameters_dict["param"], param_part))

@@ -14,21 +14,23 @@ def _check_output_folder(args):
     if os.path.exists(output_folder):
         if not os.path.isdir(output_folder):
             log_and_exit(f"output path {output_folder} exists but is not a directory")
-        #if len(os.listdir(output_folder)) > 0:
+        # if len(os.listdir(output_folder)) > 0:
         #    log_and_exit(f"output path {output_folder} exists but not empty")
     else:
         os.makedirs(output_folder)
 
 def _convert_checkpoint_partial(args, target_pp_rank, target_ep_rank):
     logger.debug(f"start _convert_checkpoint_partial, pp_rank={target_pp_rank}, ep_rank={target_ep_rank}")
-    target_model_state_dict = convert_model_optim_rng(args, target_pp_rank, target_ep_rank)
-    convert_distrib_optim(args, target_pp_rank, target_ep_rank, target_model_state_dict)
+    target_model_state_dict, ckpt_ctx = convert_model_optim_rng(args, target_pp_rank, target_ep_rank)
+    convert_distrib_optim(args, target_pp_rank, target_ep_rank, target_model_state_dict, ckpt_ctx)
 
 def _func_arguments_wrapper(func_arguments):
     args, pp_rank, ep_rank = func_arguments
+    logger.info("pp_rank={}, ep_rank={} ............".format(pp_rank, ep_rank))
     _convert_checkpoint_partial(args, pp_rank, ep_rank)
 
 def convert_checkpoint(args):
+
     _check_output_folder(args)
 
     if args.pipeline_ranks_to_process is None:
@@ -41,8 +43,9 @@ def convert_checkpoint(args):
     logger.info("pp_ranges : {}".format(pp_ranges))
     logger.info("ep_ranges : {}".format(ep_ranges))
 
-    logger.info("start convert...")
-    logger.debug(f"args.num_max_processing_processes={args.num_max_processing_processes}")
+    logger.info(f"start convert with {args.num_max_processing_processes} processes...")
+
     with multiprocessing.Pool(processes = args.num_max_processing_processes) as pool:
         pool.map(_func_arguments_wrapper, func_arguments_tuples)
+        
     logger.info("convert finished")

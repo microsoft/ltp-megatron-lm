@@ -1,4 +1,6 @@
+import os
 import ast
+import sys
 import logging
 import argparse
 from vpp_converter import convert_checkpoint
@@ -19,8 +21,13 @@ def parse_arguments():
     # arguments of target model below
     parser.add_argument("--save-iteration-dir", type=str, required=True, help="iteration folder of target model checkpoint, need to be empty if existed")
     parser.add_argument("--target-virtual-pipeline-model-parallel-size", type=int, required=True, help="vpp_size of target model")
+    parser.add_argument("--target-first-virtual-pipeline-num-layers-split", type=int, nargs="+", default=None,
+      help="only used in uneven pipeline mode, virtual pipeline split of the first stage")
+    parser.add_argument("--target-last-virtual-pipeline-num-layers-split", type=int, nargs="+", default=None,
+      help="only used in uneven pipeline mode, virtual pipeline split of the last stage")
 
-    parser.add_argument("--num-max-processing-processes", type=int, default=4,
+    # arguments of acceleration in parallel
+    parser.add_argument("--num-max-processing-processes", type=int, default=8,
       help="the maximum number of processing processes used by this script, " \
       "increasing this value can speed up model conversion(but the final bottleneck may be disk bandwidth), it will also consume more CPU memory.")
     parser.add_argument('--pipeline-ranks-to-process', type=_parse_list, default=None,
@@ -35,16 +42,27 @@ def parse_arguments():
 """
 This tool can convert a checkpoint without virtual pipeline parallelism into one with virtual pipeline parallelism
   by increasing the virtual pipeline stage size.
+
+(2025-05-30)
+It now supports uneven pipeline mode, as well as cases where the number of layers in a pipeline stage is not divisible by the virtual pipeline degree.
+  see arguments:
+    --target-first-virtual-pipeline-num-layers-split
+    --target-last-virtual-pipeline-num-layers-split
+The above two parameters must either both be provided(or both be omitted), indicating that uneven pipeline mode is enabled
+  and specifying the virtual pipeline layer distribution for the first and last pipeline stages.
+  (this distribution may be even, but it still needs to be explicitly provided.)
+This feature was introduced based on the following Pull Request.
+  https://github.com/microsoft/ltp-megatron-lm/pull/27
+  The model after converted needs to be loaded using a Megatron-LM framework that has this Pull Request applied.
+
 Other model parallel parameters (tensor-parallel-size, pipeline-parallel-size, expert-parallel-size ...) remain unchanged.
 
 Note that currently, all of the following configurations must be satisfied to be supported.
-  current pipeline partition is even (num_layers for each pipeline stage is equal)
-  tensor-model-parallel-size=1
-  expert-tensor-parallel-size=1
-  ckpt_type=CheckpointType.LEGACY
+  tensor_parallel_size=1
   ckpt_format=torch
-so the checkpoint for each iteration folder should look like this:
-.
+So the checkpoint for each iteration folder should look like this:
+
+iter_0000005
 ├── mp_rank_00_000_000
 │  ├── distrib_optim.pt
 │  └── model_optim_rng.pt
@@ -57,8 +75,8 @@ so the checkpoint for each iteration folder should look like this:
 ...
 
 """
+
 def main(args):
-    logger.info(f"args : {args}\n")
     convert_checkpoint(args)
 
 if __name__ == "__main__":
