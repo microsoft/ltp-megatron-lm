@@ -5,6 +5,8 @@ import shutil
 import threading
 from typing import List
 
+import torch
+
 from .global_vars import get_args
 
 
@@ -24,9 +26,17 @@ class CkptUploadQueue:
         args = get_args()
 
         self.azcopy_command = "azcopy copy --output-level essential --log-level WARNING --recursive"
+        if args.ckpt_upload_ingress_mbps > 0:
+            if args.ckpt_format == "torch":
+                self.azcopy_command += f" --cap-mbps {args.ckpt_upload_ingress_mbps}"
+            else:
+                nnodes = args.world_size // torch.cuda.device_count()
+                self.azcopy_command += f" --cap-mbps {args.ckpt_upload_ingress_mbps // nnodes}"
+
         self.ckpt_iter_prefix = "iter_"
         self.ckpt_tracker_file = "latest_checkpointed_iteration.txt"
         self.log_progress_file = "progress.txt" if args.log_progress else None
+        self.upload_metafiles = bool(args.rank == 0)
         self.local_dir = args.save
         self.blob_path = args.ckpt_upload_blob_path.rstrip("/")
         self.blob_sas_path = args.ckpt_upload_blob_sas_path
@@ -79,7 +89,7 @@ class CkptUploadQueue:
         Run the checkpoint upload and deletion task asynchronously.
         """
         rc = await self._run_upload(upload_paths)
-        if rc:
+        if rc and self.upload_metafiles:
             metafile_paths = []
             try:
                 uploaded_iter = max(
@@ -96,10 +106,10 @@ class CkptUploadQueue:
             if self.log_progress_file:
                 metafile_paths.append(self.log_progress_file)
             await self._run_upload(metafile_paths)
-            if on_success_delete:
-                await self._run_delete(
-                    [path for path in upload_paths if path.startswith(self.ckpt_iter_prefix)]
-                )
+        if rc and on_success_delete:
+            await self._run_delete(
+                [path for path in upload_paths if path.startswith(self.ckpt_iter_prefix)]
+            )
 
     async def _run_upload(self, upload_paths: List[str]) -> bool:
         """
