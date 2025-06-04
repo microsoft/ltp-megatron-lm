@@ -1,4 +1,4 @@
-name: Unit Tests
+name: unit-tests
 
 on:
   push:
@@ -16,8 +16,8 @@ on:
     - published
 
 jobs:
-  unit-tests-single-node:
-    name: Unit Tests (Single-node)
+  single-rank-amd-mi300x:
+    name: single-rank-amd-mi300x
     runs-on: unit-tests
     timeout-minutes: 3600
     permissions:
@@ -27,14 +27,12 @@ jobs:
     steps:
       - name: Checkout target branch
         uses: actions/checkout@v3
-      - name: Create tar.gz for target branch
+      - name: Upload target branch
         run: |
           touch ltp-megatron-lm.tar.gz
           tar --exclude='ltp-megatron-lm.tar.gz' -czf ltp-megatron-lm.tar.gz .
-      - name: Upload tar.gz for target branch
-        run: |
           ${AZCOPY_PATH} copy ltp-megatron-lm.tar.gz ${AZURE_BLOB_CODE_TAR_URL}
-      - name: Run test job
+      - name: Test target branch
         run: |
-          export LTP_JOB_YAML_PATH=${LTP_JOB_UNIT_TESTS_SINGLE_NODE_YAML_PATH}
+          export LTP_JOB_YAML_PATH=${LTP_JOB_UNIT_TESTS_SINGLE_RANK_AMD_MI300X_YAML_PATH}
           python ${LTP_RUN_TEST_JOB_PY_PATH}
