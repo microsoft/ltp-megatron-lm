@@ -33,7 +33,7 @@ jobs:
           tar --exclude='ltp-megatron-lm.tar.gz' -czf ltp-megatron-lm.tar.gz .
       - name: Upload tar.gz for target branch
         run: |
-          ${AZCOPY_PATH} copy ltp-megatron-lm.tar.gz ${AZURE_BLOB_CODE_TAR_URL}
+          ${AZCOPY_PATH} copy --output-level essential --log-level WARNING ltp-megatron-lm.tar.gz ${AZURE_BLOB_CODE_TAR_URL}
       - name: Submit test job
         run: |
           export LTP_JOB_YAML_PATH=${LTP_JOB_UNIT_TESTS_SINGLE_NODE_YAML_PATH}
