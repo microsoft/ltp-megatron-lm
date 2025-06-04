@@ -1,0 +1,42 @@
+name: Unit Tests
+
+on:
+  push:
+    branches:
+    - dev
+    - canary/*
+    - release/*
+  pull_request:
+    branches:
+    - dev
+    - canary/*
+    - release/*
+  release:
+    types:
+    - published
+
+jobs:
+  unit-tests-single-node:
+    name: Unit Tests (Single-node)
+    runs-on: unit-tests
+    timeout-minutes: 3600
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Create tar for the code
+        run: |
+          tar -czf ltp-megatron-lm.tar.gz .
+      - name: Upload tar
+        run: |
+          ${AZCOPY_PATH} ltp-megatron-lm.tar.gz ${AZURE_BLOB_CODE_TAR_URL}
+      - name: Submit test job
+        run: |
+          export LTP_JOB_YAML_PATH=${LTP_JOB_UNIT_TESTS_SINGLE_NODE_YAML_PATH}
+          python tests/ltp_utils/submit_test_job.py
+      - name: Wait test job
+        run: |
+          python tests/ltp_utils/wait_test_job.py
