@@ -36,7 +36,7 @@ jobs:
       - name: Submit test job
         run: |
           export LTP_JOB_YAML_PATH=${LTP_JOB_UNIT_TESTS_SINGLE_NODE_YAML_PATH}
-          python tests/ltp_utils/submit_test_job.py
+          python ${LTP_SUBMIT_TEST_JOB_PY_PATH}
       - name: Wait test job
         run: |
-          python tests/ltp_utils/wait_test_job.py
+          python ${LTP_WAIT_TEST_JOB_PY_PATH}
