@@ -33,8 +33,9 @@ def _convert_state_dict_args(args, target_pp_rank, target_ep_rank, state_dict, c
 
 def _convert_state_dict_optimizer(args, target_pp_rank, target_ep_rank, state_dict, ckpt_ctx):
     # optimizer state dict is equal
-    # TODO : step
-    optimizer_states = state_dict["optimizer"]
+    state_optimizer = state_dict["optimizer"]
+    optimizer_states = [state_optimizer] if not isinstance(state_optimizer, list) \
+        else state_optimizer
     try:
         current_step = -1
         param_group_cadidates = []
@@ -55,7 +56,7 @@ def _convert_state_dict_rng(args, target_pp_rank, target_ep_rank, state_dict, ck
     # rng state is equal
     pass
 
-def _fetch_model_state_dict(args, src_pp_rank, src_ep_rank, src_start_layer_idx, num_layers_for_this_virtual_stage):
+def _fetch_model_state_dict(args, src_pp_rank, src_ep_rank, src_start_layer_idx, num_layers_for_this_virtual_stage, base_layer_idx):
     src_folder_path = os.path.join(args.load_iteration_dir, get_folder_name(args, src_pp_rank, src_ep_rank))
     src_file_path = os.path.join(src_folder_path, MODEL_OPTIM_RNG_FILENAME)
 
@@ -71,19 +72,20 @@ def _fetch_model_state_dict(args, src_pp_rank, src_ep_rank, src_start_layer_idx,
             continue
         layer_idx = int(k.split(".layers.")[1].split(".")[0])
         if src_start_layer_idx <= layer_idx < src_start_layer_idx+num_layers_for_this_virtual_stage:
-            new_key = k.replace(f".layers.{layer_idx}", f".layers.{layer_idx-src_start_layer_idx}")
+            new_key = k.replace(f".layers.{layer_idx}", f".layers.{layer_idx - src_start_layer_idx + base_layer_idx}")
             outputs[new_key] = v.clone().detach() if torch.is_tensor(v) else v
             layer_idx_added.add(layer_idx)
-    
-    # TODO
-    # Currently, arbitrary layer partitioning is not supported, so I add a double-check assert here.
-    # If not supported, an error will be raised at this point.
-    assert len(layer_idx_added) == num_layers_for_this_virtual_stage, \
-        "size of layer_idx_added does not equal to num_layers_for_this_virtual_stage, " \
-        "{} vs {} ,".format(len(layer_idx_added), num_layers_for_this_virtual_stage) + \
-        "src_pp_rank={}, src_ep_rank={}, src_start_layer_idx={}, num_layers_for_this_virtual_stage={}".format(
-            src_pp_rank, src_ep_rank, src_start_layer_idx, num_layers_for_this_virtual_stage)
-    
+
+    num_layers_remain = num_layers_for_this_virtual_stage - len(layer_idx_added)
+    if num_layers_remain > 0:
+        assert base_layer_idx == 0
+        next_level_outputs = _fetch_model_state_dict(args,
+            src_pp_rank+1,
+            src_ep_rank,
+            0,
+            num_layers_remain,
+            len(layer_idx_added))
+        outputs.update(next_level_outputs)
     return outputs
 
 def _convert_state_dict_model(args, target_pp_rank, target_ep_rank, state_dict, ckpt_ctx):
@@ -107,7 +109,8 @@ def _convert_state_dict_model(args, target_pp_rank, target_ep_rank, state_dict, 
             src_pp_rank,
             target_ep_rank,
             src_start_layer_idx,
-            num_layers_for_this_virtual_stage)
+            num_layers_for_this_virtual_stage,
+            0)
         vmodel.update(src_model_state_dict)
 
         if target_pp_rank == ckpt_ctx.pp_size-1 and vidx == ckpt_ctx.vpp_size-1:

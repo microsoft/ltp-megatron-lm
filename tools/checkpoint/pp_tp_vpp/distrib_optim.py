@@ -79,8 +79,6 @@ def _fetch_opt_parameters(
     if end_offset == -1:
         end_offset = current_offset
         upper_bound_layer_idx += 1
-    assert upper_bound_layer_idx - src_start_layer_idx == num_layers_for_this_virtual_stage, \
-        "layer idx double-check failed"
 
     opt_parameters_dict = next(iter(state_dict_disopt[0].values()))
     (param_part, exp_avg_part, exp_avg_sq_part) = (
@@ -88,8 +86,22 @@ def _fetch_opt_parameters(
         opt_parameters_dict["exp_avg"][-end_offset:(-start_offset if start_offset!=0 else None)],
         opt_parameters_dict["exp_avg_sq"][-end_offset:(-start_offset if start_offset!=0 else None)],
     )
-    logger.debug(f"_fetch_opt_parameters, src_pp_rank={src_pp_rank}, src_start_layer_idx={src_start_layer_idx}, "
-        "count_dense={}, count_experts={}, num_elements_in_param_part={}".format(count_dense, count_experts, param_part.nelement()))
+
+    num_layers_remain = num_layers_for_this_virtual_stage - upper_bound_layer_idx + src_start_layer_idx
+    if num_layers_remain > 0:
+        (next_level_param_part, next_level_exp_avg_part, next_level_exp_avg_sq_part) = _fetch_opt_parameters(
+        args,
+        src_pp_rank + 1,
+        src_ep_rank,
+        0,
+        num_layers_remain,
+        count_dense,
+        count_experts)
+
+        param_part =  torch.cat((next_level_param_part, param_part))
+        exp_avg_part = torch.cat((next_level_exp_avg_part, exp_avg_part))
+        exp_avg_sq_part = torch.cat((next_level_exp_avg_sq_part, exp_avg_sq_part))
+
     return (param_part, exp_avg_part, exp_avg_sq_part)
 
 def convert_distrib_optim(args, target_pp_rank, target_ep_rank, target_model_state_dict, ckpt_ctx):
