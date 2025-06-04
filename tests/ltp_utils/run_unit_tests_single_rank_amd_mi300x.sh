@@ -8,7 +8,7 @@ export LOCAL_RANK=0
 #     raise pickle.UnpicklingError(f"global '{module}.{name}' is forbidden")
 # _pickle.UnpicklingError: global 'copy_reg._reconstructor' is forbidden
 # 
-# Other test cases hang with segmentation fault.
+# Other deselected test cases hang with segmentation fault.
 
 pytest -v \
   --deselect "tests/unit_tests/data/test_preprocess_data.py::test_preprocess_data_bert" \
