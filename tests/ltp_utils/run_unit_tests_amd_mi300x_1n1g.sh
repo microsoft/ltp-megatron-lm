@@ -1,6 +1,3 @@
-export WORLD_SIZE=1
-export LOCAL_RANK=0
-
 # The test_preprocess_data_bert case hangs with the following error due to
 # security fix in latest nltk (https://github.com/nltk/nltk/issues/3266):
 # 
@@ -10,7 +7,9 @@ export LOCAL_RANK=0
 # 
 # Other deselected test cases hang with segmentation fault.
 
-pytest -v \
+torchrun \
+  --nproc_per_node 1 --nnodes 1 --node_rank 0 --master_addr localhost --master_port 50326 \
+  -m pytest -v \
   --deselect "tests/unit_tests/data/test_preprocess_data.py::test_preprocess_data_bert" \
   --deselect "tests/unit_tests/dist_checkpointing/test_torch_dist.py::TestCPUTensors::test_cpu_tensors_dont_take_too_much_space" \
   --deselect "tests/unit_tests/dist_checkpointing/test_serialization.py::TestSerialization::test_single_process_save_load" \

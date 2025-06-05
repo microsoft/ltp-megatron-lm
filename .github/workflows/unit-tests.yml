@@ -16,8 +16,8 @@ on:
     - published
 
 jobs:
-  single-rank-amd-mi300x:
-    name: single-rank-amd-mi300x
+  nvidia-h200-1n1g:
+    name: nvidia-h200-1n1g
     runs-on: unit-tests
     timeout-minutes: 3600
     permissions:
@@ -29,4 +29,18 @@ jobs:
         uses: actions/checkout@v3
       - name: Test target branch
         run: |
-          bash ${LTP_RUN_CI_SCRIPT_PATH} unit-tests-single-rank-amd-mi300x
+          bash ${LTP_RUN_CI_SCRIPT_PATH} unit-tests-nvidia-h200-1n1g
+  amd-mi300x-1n1g:
+    name: amd-mi300x-1n1g
+    runs-on: unit-tests
+    timeout-minutes: 3600
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v3
+      - name: Test target branch
+        run: |
+          bash ${LTP_RUN_CI_SCRIPT_PATH} unit-tests-amd-mi300x-1n1g
