@@ -9,7 +9,11 @@
 
 torchrun \
   --nproc_per_node 1 --nnodes 1 --node_rank 0 --master_addr localhost --master_port 50326 \
-  -m pytest -v \
+  -m pytest -xv \
+  --cov-report=term \
+  --cov-branch \
+  --cov=megatron/core \
+  --no-cov-on-fail \
   --deselect "tests/unit_tests/data/test_preprocess_data.py::test_preprocess_data_bert" \
   --deselect "tests/unit_tests/dist_checkpointing/test_torch_dist.py::TestCPUTensors::test_cpu_tensors_dont_take_too_much_space" \
   --deselect "tests/unit_tests/dist_checkpointing/test_serialization.py::TestSerialization::test_single_process_save_load" \
