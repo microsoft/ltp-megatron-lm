@@ -27,12 +27,6 @@ jobs:
     steps:
       - name: Checkout target branch
         uses: actions/checkout@v3
-      - name: Upload target branch
-        run: |
-          touch ltp-megatron-lm.tar.gz
-          tar --exclude='ltp-megatron-lm.tar.gz' -czf ltp-megatron-lm.tar.gz .
-          ${AZCOPY_PATH} copy ltp-megatron-lm.tar.gz ${AZURE_BLOB_CODE_TAR_URL}
       - name: Test target branch
         run: |
-          export LTP_JOB_YAML_PATH=${LTP_JOB_UNIT_TESTS_SINGLE_RANK_AMD_MI300X_YAML_PATH}
-          python ${LTP_RUN_TEST_JOB_PY_PATH}
+          bash ${LTP_RESOURCES_DIR}/run_unit_tests_single_rank_amd_mi300x_proxy.sh
