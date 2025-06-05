@@ -2010,7 +2010,7 @@ def _add_checkpointing_args(parser):
                        help='Azure blob path for checkpoint upload, do not include checkpoint name.')
     group.add_argument('--ckpt-upload-blob-sas-path', type=str, default=None,
                        help='Path to the file which contains Azure blob SAS token for checkpoint upload.')
-    group.add_argument('--ckpt-upload-blob-ingress-mbps', type=int, default=60000,
+    group.add_argument('--ckpt-upload-blob-ingress-mbps', type=int, default=0,
                        help='Ingress limit for Azure blob upload, set to 0 to disable limit. Check '
                             'https://learn.microsoft.com/en-us/azure/storage/common/scalability-targets-standard-account for details')
     group.add_argument('--ckpt-upload-blob-concurrency', type=str, default='AUTO',
