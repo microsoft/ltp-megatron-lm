@@ -124,6 +124,21 @@ class MoELayer(BaseMoELayer):
             if self.shared_expert_overlap:
                 self.token_dispatcher.set_shared_experts(self.shared_experts)
 
+    def _set_moe_layer_recompute(self):
+        if self.moe_layer_recompute:
+            if isinstance(self.config.moe_layer_recompute_freq, int):
+                self.moe_layer_recompute = (
+                    ((self.layer_number - 1) % self.config.moe_layer_recompute_freq) == 0
+                )
+            else:
+                self.moe_layer_recompute = (
+                    bool(self.config.moe_layer_recompute_freq[self.layer_number - 1])
+                )
+
+    def set_layer_number(self, layer_number: int):
+        super(MoELayer, self).set_layer_number(layer_number)
+        self._set_moe_layer_recompute()
+
     def forward(self, hidden_states: torch.Tensor):
         if (
             self.training

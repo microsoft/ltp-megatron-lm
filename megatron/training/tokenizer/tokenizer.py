@@ -46,6 +46,8 @@ def build_tokenizer(args, **kwargs):
         assert args.tokenizer_model is not None
         tokenizer = _GPTSentencePieceTokenizer(args.tokenizer_model)
     elif args.tokenizer_type == 'HuggingFaceTokenizer':
+        if args.tokenizer_huggingface_trust_remote_code:
+            kwargs['trust_remote_code'] = True
         tokenizer = _HuggingFaceTokenizer(args.tokenizer_model, **kwargs)
     elif args.tokenizer_type == 'Llama2Tokenizer':
         assert args.tokenizer_model is not None

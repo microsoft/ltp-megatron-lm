@@ -281,6 +281,7 @@ def core_gpt_dataset_config_from_args(args):
         eod_mask_loss=args.eod_mask_loss,
         create_attention_mask=args.create_attention_mask_in_dataloader,
         s3_cache_path=args.s3_cache_path,
+        scale_shuffle=args.scale_shuffle,
     )
 
 

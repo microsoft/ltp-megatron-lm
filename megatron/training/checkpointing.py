@@ -27,6 +27,7 @@ from megatron.core.utils import is_te_min_version
 from megatron.core.fp8_utils import is_float8tensor
 from megatron.core.rerun_state_machine import get_rerun_state_machine
 from .async_utils import schedule_async_save, is_empty_async_queue
+from .ckpt_utils import CkptUploadQueue
 from .global_vars import get_args, get_one_logger
 from .utils import unwrap_model, print_rank_0, append_to_progress_log, is_last_rank
 from ..core.dist_checkpointing.serialization import \
@@ -512,7 +513,7 @@ def save_checkpoint(iteration, model, optimizer, opt_param_scheduler, num_floati
 
     # And update the latest iteration
     if not torch.distributed.is_initialized() \
-            or torch.distributed.get_rank() == 0:
+            or torch.distributed.get_rank() == 0 or args.ckpt_isolated_save and args.local_rank == 0:
         tracker_filename = get_checkpoint_tracker_filename(save_dir)
 
         if ckpt_type == CheckpointType.LOCAL:
@@ -554,7 +555,8 @@ def save_checkpoint(iteration, model, optimizer, opt_param_scheduler, num_floati
     if not torch.distributed.is_initialized() \
        or is_last_rank():
         def wandb_finalize_fn():
-            wandb_utils.on_save_checkpoint_success(checkpoint_name, get_checkpoint_tracker_filename(save_dir), save_dir, iteration)
+            if not args.ckpt_isolated_save:
+                wandb_utils.on_save_checkpoint_success(checkpoint_name, get_checkpoint_tracker_filename(save_dir), save_dir, iteration)
         if args.async_save:
             assert async_save_request is not None
             async_save_request.add_finalize_fn(wandb_finalize_fn)
@@ -574,6 +576,16 @@ def save_checkpoint(iteration, model, optimizer, opt_param_scheduler, num_floati
     logger.debug(f"rank: {rank}, takes {end_misc - start_misc} to finalize ckpt save ")
 
     ft_integration.on_checkpointing_end(is_async_finalization=False)
+
+    if args.local_rank == 0 and \
+        (not torch.distributed.is_initialized() or mpu.get_expert_data_parallel_rank() == 0 or ckpt_type != CheckpointType.LEGACY) and \
+        (not args.async_save):
+        if args.ckpt_upload_blob_path and args.ckpt_upload_blob_sas_path:
+            iter_dir = os.path.basename(get_checkpoint_name(save_dir, iteration, return_base_dir=True))
+            CkptUploadQueue().add_upload_task([iter_dir])
+        else:
+            print("Skip checkpoint upload due to missed blob path or SAS token")
+
 
 def cleanup_old_non_persistent_checkpoint(save_dir, leave_ckpt_num=1, do_async=False):
     if torch.distributed.is_initialized() and torch.distributed.get_rank() != 0:
@@ -1147,6 +1159,34 @@ def load_args_from_checkpoint(
     return args, checkpoint_args
 
 
+def get_args_from_checkpoint(
+    args, load_arg='load', checkpointing_context=None
+):
+    """Get arguments from the checkpoint specified in the
+    arguments.
+    """
+    load_dir = getattr(args, load_arg)
+
+    if load_dir is None:
+        print_rank_0('No load directory specified.')
+        return None
+
+    state_dict, _, _, _ = _load_base_checkpoint(
+        load_dir,
+        args,
+        rank0=True,
+        checkpointing_context=checkpointing_context,
+    )
+
+    if not state_dict or 'args' not in state_dict:
+        print_rank_0('No arguments found in checkpoint.')
+        return None
+
+    checkpoint_args = state_dict['args']
+    setattr(checkpoint_args, 'checkpoint_iteration', state_dict['iteration'])
+    return checkpoint_args
+
+
 def fix_fp8_params_lose_precision_when_loading_dist_ckpt(state_dict):
     """
     When "--fp8-param-gather" and "--use-dist-ckpt" are both enabled, the state dict read from
@@ -1481,7 +1521,8 @@ def load_checkpoint(ddp_model, optimizer, opt_param_scheduler, load_arg='load', 
     # Additional callback for wandb (last rank)
     if not torch.distributed.is_initialized() \
        or is_last_rank():
-        wandb_utils.on_load_checkpoint_success(checkpoint_name, load_dir)
+        if not args.ckpt_isolated_save:
+            wandb_utils.on_load_checkpoint_success(checkpoint_name, load_dir)
 
     torch.cuda.empty_cache()
 

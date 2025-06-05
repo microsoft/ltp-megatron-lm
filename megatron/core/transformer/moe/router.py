@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from functools import partial
 from typing import Callable
 
+import math
 import torch
 
 from megatron.core import parallel_state
@@ -12,6 +13,7 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.moe.moe_utils import (
     MoEAuxLossAutoScaler,
     save_to_aux_losses_tracker,
+    save_to_tokens_per_expert_tracker,
     sequence_load_balancing_loss_func,
     global_batch_load_balancing_loss_func,
     sinkhorn,
@@ -44,7 +46,10 @@ class Router(ABC, MegatronModule):
             torch.empty((self.config.num_moe_experts, self.config.hidden_size), dtype=torch.float32)
         )
         if config.perform_initialization:
-            config.init_method(self.weight)
+            if config.use_kaiming_init_for_moe_router:
+                torch.nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+            else:
+                config.init_method(self.weight)
         self.weight.data = self.weight.data.to(dtype=config.params_dtype)
         setattr(self.weight, 'sequence_parallel', config.sequence_parallel)
         # If calculate per token loss, we need to scale up moe aux loss by the number of tokens.
@@ -69,7 +74,17 @@ class Router(ABC, MegatronModule):
             router_dtype = torch.float32
         elif self.config.moe_router_dtype == 'fp64':
             router_dtype = torch.float64
-        logits = torch.nn.functional.linear(input.to(router_dtype), self.weight.to(router_dtype))
+        if self.config.moe_router_gradient_scale is not None:
+            gradient_scaled_weight = (
+                self.weight.to(router_dtype) * self.config.moe_router_gradient_scale +
+                self.weight.to(router_dtype).detach() * (1 - self.config.moe_router_gradient_scale)
+            )
+            if self.config.moe_router_gradient_scale_normalize:
+                # self.weight.shape is (num_experts, hidden_size) so hidden_size dim is normalized
+                gradient_scaled_weight = torch.nn.functional.normalize(gradient_scaled_weight)
+            logits = torch.nn.functional.linear(input.to(router_dtype), gradient_scaled_weight)
+        else:
+            logits = torch.nn.functional.linear(input.to(router_dtype), self.weight.to(router_dtype))
         return logits
 
     @abstractmethod
@@ -113,6 +128,7 @@ class TopKRouter(Router):
         self.topk = self.config.moe_router_topk
         self.routing_type = self.config.moe_router_load_balancing_type
         self.score_function = self.config.moe_router_score_function
+        self.moe_aux_loss_score_function = self.config.moe_aux_loss_score_function
         self.input_jitter = None
 
         self.enable_expert_bias = self.config.moe_router_enable_expert_bias
@@ -182,9 +198,9 @@ class TopKRouter(Router):
         Returns:
             torch.Tensor: The normalized routing scores.
         """
-        if self.score_function == "softmax":
+        if self.moe_aux_loss_score_function == "softmax":
             scores = torch.softmax(logits, dim=-1, dtype=torch.float32)
-        elif self.score_function == "sigmoid":
+        elif self.moe_aux_loss_score_function == "sigmoid":
             scores = torch.sigmoid(logits)
             scores = (
                 scores / (scores.sum(dim=-1, keepdim=True) + 1e-20) if self.topk > 1 else scores
@@ -315,6 +331,13 @@ class TopKRouter(Router):
             probs = self.apply_load_balancing_loss(
                 activation=probs, load_balancing_loss_func=aux_loss_func
             )
+
+            save_to_tokens_per_expert_tracker(
+                "global_batch_tokens_per_expert",
+                tokens_per_expert,
+                self.layer_number,
+                self.config.num_layers,
+                reduce_group=parallel_state.get_data_parallel_group())
 
         return probs, routing_map
 
