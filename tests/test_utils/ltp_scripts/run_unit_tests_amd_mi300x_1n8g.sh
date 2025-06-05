@@ -46,7 +46,7 @@ torchrun \
 
 clear_previous_runs
 disable_pattern=""
-disable_pattern+="not test_preprocess_data_bert" \
+disable_pattern+="not test_preprocess_data_bert"
 torchrun \
   ${TORCHRUN_ARGS[@]} \
   -m pytest -vs \
