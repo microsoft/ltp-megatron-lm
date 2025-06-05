@@ -17,9 +17,9 @@ TORCHRUN_ARGS=(
 )
 
 PYTEST_COV_ARGS=(
-  --cov-report term
   --cov-branch
   --cov megatron
+  --cov-append
   --no-cov-on-fail
 )
 
@@ -58,8 +58,8 @@ clear_previous_runs
 disable_pattern=""
 disable_pattern+="not test_memory_usage and "
 disable_pattern+="not test_dp_sharding and "
-disable_pattern+="not test_remove_sharded_tensors and"
-disable_pattern+="not test_errors_are_reported and"
+disable_pattern+="not test_remove_sharded_tensors and "
+disable_pattern+="not test_errors_are_reported and "
 disable_pattern+="not test_te_grouped_linear_torch_native"
 torchrun \
   ${TORCHRUN_ARGS[@]} \
@@ -133,3 +133,6 @@ torchrun \
   --deselect "tests/unit_tests/test_parallel_state.py::test_different_initialize_order_unconsistency[src_tp_pp4-2]" \
   --deselect "tests/unit_tests/test_parallel_state.py::test_different_initialize_order_unconsistency[src_tp_pp5-2]" \
   tests/unit_tests/test_parallel_state.py
+
+coverage combine
+coverage report
