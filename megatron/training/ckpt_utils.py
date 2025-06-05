@@ -26,12 +26,10 @@ class CkptUploadQueue:
         args = get_args()
 
         self.azcopy_command = "azcopy copy --output-level essential --log-level WARNING --recursive"
-        if args.ckpt_upload_ingress_mbps > 0:
-            if args.ckpt_format == "torch":
-                self.azcopy_command += f" --cap-mbps {args.ckpt_upload_ingress_mbps}"
-            else:
+        if args.ckpt_upload_blob_ingress_mbps > 0:
+            if args.ckpt_format == "torch_dist":
                 nnodes = args.world_size // torch.cuda.device_count()
-                self.azcopy_command += f" --cap-mbps {args.ckpt_upload_ingress_mbps // nnodes}"
+                self.azcopy_command += f" --cap-mbps {args.ckpt_upload_blob_ingress_mbps // nnodes}"
 
         self.ckpt_iter_prefix = "iter_"
         self.ckpt_tracker_file = "latest_checkpointed_iteration.txt"
