@@ -19,8 +19,25 @@ PYTEST_COV_ARGS=(
   --no-cov-on-fail
 )
 
+clear_previous_runs() {
+    ps axu | grep python | awk -F' ' '{print "kill -9 "$2}' | bash
+    sleep 10
+}
+
+clear_previous_runs
 torchrun \
   ${TORCHRUN_ARGS[@]} \
   -m pytest -vs \
   ${PYTEST_COV_ARGS[@]} \
+  --ignore tests/unit_tests/data \
   tests/unit_tests
+
+clear_previous_runs
+disable_pattern=""
+disable_pattern+="not test_preprocess_data_bert"
+torchrun \
+  ${TORCHRUN_ARGS[@]} \
+  -m pytest -vs \
+  ${PYTEST_COV_ARGS[@]} \
+  -k "${disable_pattern}" \
+  tests/unit_tests/data
