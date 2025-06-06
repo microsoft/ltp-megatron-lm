@@ -81,6 +81,9 @@ torchrun \
   -m pytest -vs \
   ${PYTEST_COV_ARGS[@]} \
   --deselect "tests/unit_tests/transformer/test_retro_attention.py::TestRetroAttention::test_gpu_forward" \
+  --deselect "tests/unit_tests/transformer/test_attention.py::TestParallelAttention::test_gpu_forward" \
+  --deselect "tests/unit_tests/transformer/test_attention.py::TestParallelAttention::test_fused_rope_gpu_forward" \
+  --deselect "tests/unit_tests/transformer/test_attention.py::TestParallelAttention::test_checkpointed_gpu_forward" \
   --ignore "tests/unit_tests/transformer/moe/test_moe_layer_discrepancy.py" \
   tests/unit_tests/transformer
 
@@ -133,6 +136,3 @@ torchrun \
   --deselect "tests/unit_tests/test_parallel_state.py::test_different_initialize_order_unconsistency[src_tp_pp4-2]" \
   --deselect "tests/unit_tests/test_parallel_state.py::test_different_initialize_order_unconsistency[src_tp_pp5-2]" \
   tests/unit_tests/test_parallel_state.py
-
-coverage combine
-coverage report

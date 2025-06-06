@@ -13,18 +13,12 @@ TORCHRUN_ARGS=(
 )
 
 PYTEST_COV_ARGS=(
-  --cov-report term
   --cov-branch
   --cov megatron
+  --cov-append
   --no-cov-on-fail
 )
 
-clear_previous_runs() {
-    ps axu | grep python | awk -F' ' '{print "kill -9 "$2}' | bash
-    sleep 10
-}
-
-clear_previous_runs
 torchrun \
   ${TORCHRUN_ARGS[@]} \
   -m pytest -vs \
