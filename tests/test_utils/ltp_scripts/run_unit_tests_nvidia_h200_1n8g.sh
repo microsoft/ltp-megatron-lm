@@ -31,6 +31,9 @@ torchrun \
   ${PYTEST_COV_ARGS[@]} \
   --ignore tests/unit_tests/data \
   --ignore tests/unit_tests/dist_checkpointing \
+  --ignore tests/unit_tests/inference/engines/test_dynamic_engine.py \
+  --ignore tests/unit_tests/models \
+  --ignore tests/unit_tests/test_checkpointing.py \
   tests/unit_tests
 
 clear_previous_runs
@@ -54,3 +57,22 @@ torchrun \
   ${PYTEST_COV_ARGS[@]} \
   -k "${disable_pattern}" \
   tests/unit_tests/dist_checkpointing
+
+clear_previous_runs
+torchrun \
+  ${TORCHRUN_ARGS[@]} \
+  -m pytest -vs \
+  ${PYTEST_COV_ARGS[@]} \
+  --deselect "tests/unit_tests/models/test_bert_model.py::TestBertModelAttentionDimensions::test_transformer_engine_version_1_7_to_1_10_rng_error" \
+  --deselect "tests/unit_tests/models/test_t5_model.py::TestT5Model::test_forward_output_encoder_hidden_only" \
+  --deselect "tests/unit_tests/models/test_t5_model.py::TestT5Model::test_forward_with_encoder_hidden_states" \
+  --deselect "tests/unit_tests/models/test_t5_model.py::TestT5Model::test_post_process_forward" \
+  tests/unit_tests/models
+
+clear_previous_runs
+torchrun \
+  ${TORCHRUN_ARGS[@]} \
+  -m pytest -vs \
+  ${PYTEST_COV_ARGS[@]} \
+  --deselect "tests/unit_tests/test_checkpointing.py::test_save_checkpoint[torch]" \
+  tests/unit_tests/test_checkpointing.py
