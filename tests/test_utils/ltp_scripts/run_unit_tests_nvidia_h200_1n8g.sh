@@ -20,7 +20,7 @@ PYTEST_COV_ARGS=(
 )
 
 clear_previous_runs() {
-    ps axu | grep python | awk -F' ' '{print "kill -9 "$2}' | bash
+    ps axu | grep '[p]ython' | awk '{print $2}' | xargs -r -n 1 kill -9 2>/dev/null || true
     sleep 10
 }
 
