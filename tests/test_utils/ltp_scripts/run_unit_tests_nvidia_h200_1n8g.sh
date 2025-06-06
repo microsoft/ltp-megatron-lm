@@ -10,6 +10,7 @@ pip install flask flask-restful tiktoken tensorstore
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 export NCCL_DEBUG=WARN
 export NCCL_SOCKET_IFNAME=eth0
+export NCCL_NVLS_ENABLE=0
 
 TORCHRUN_ARGS=(
   --nproc_per_node 8
