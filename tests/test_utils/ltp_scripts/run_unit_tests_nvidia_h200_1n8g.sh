@@ -30,6 +30,7 @@ torchrun \
   -m pytest -vs \
   ${PYTEST_COV_ARGS[@]} \
   --ignore tests/unit_tests/data \
+  --ignore tests/unit_tests/dist_checkpointing \
   tests/unit_tests
 
 clear_previous_runs
@@ -41,3 +42,15 @@ torchrun \
   ${PYTEST_COV_ARGS[@]} \
   -k "${disable_pattern}" \
   tests/unit_tests/data
+
+clear_previous_runs
+disable_pattern=""
+disable_pattern+="not test_memory_usage and "
+disable_pattern+="not test_dp_sharding and "
+disable_pattern+="not test_remove_sharded_tensors"
+torchrun \
+  ${TORCHRUN_ARGS[@]} \
+  -m pytest -vs \
+  ${PYTEST_COV_ARGS[@]} \
+  -k "${disable_pattern}" \
+  tests/unit_tests/dist_checkpointing
