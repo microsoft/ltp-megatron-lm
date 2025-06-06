@@ -19,7 +19,7 @@ jobs:
   nvidia-h200-1n8g:
     name: nvidia-h200-1n8g
     runs-on: unit-tests
-    timeout-minutes: 3600
+    timeout-minutes: 60
     permissions:
       contents: read
     strategy:
@@ -33,7 +33,7 @@ jobs:
   amd-mi300x-1n8g:
     name: amd-mi300x-1n8g
     runs-on: unit-tests
-    timeout-minutes: 3600
+    timeout-minutes: 60
     permissions:
       contents: read
     strategy:
