@@ -32,6 +32,18 @@ clear_previous_runs() {
     sleep 10
 }
 
+# Exclude test categories that fail to pass in the full test.
+# Some test cases fail in:
+# - data
+# - dist_checkpointing
+# - models
+# - test_checkpointing
+# - test_parallel_state
+# - test_tokenizer.py \
+# - transformer
+# All test cases fail in:
+# - inference/engines/test_dynamic_engine.py
+
 clear_previous_runs
 torchrun \
   ${TORCHRUN_ARGS[@]} \

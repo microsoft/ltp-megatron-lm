@@ -31,6 +31,20 @@ clear_previous_runs() {
     sleep 10
 }
 
+# Exclude test categories that fail to pass in the full test.
+# Some test cases fail in:
+# - data
+# - dist_checkpointing
+# - models
+# - test_checkpointing
+# - test_parallel_state
+# - transformer
+# All test cases fail in:
+# - inference/engines/test_dynamic_engine.py
+# Hangs in full test but passes in separate run:
+# - distributed/test_torch_fully_sharded_parallel.py
+# - ssm/test_mamba_hybrid_layer_allocation.py
+
 clear_previous_runs
 torchrun \
   ${TORCHRUN_ARGS[@]} \
