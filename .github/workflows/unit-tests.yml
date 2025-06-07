@@ -1,0 +1,46 @@
+name: unit-tests
+
+on:
+  push:
+    branches:
+    - dev
+    - canary/*
+    - release/*
+  pull_request:
+    branches:
+    - dev
+    - canary/*
+    - release/*
+  release:
+    types:
+    - published
+
+jobs:
+  nvidia-h200-1n8g:
+    name: nvidia-h200-1n8g
+    runs-on: unit-tests
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v3
+      - name: Test target branch
+        run: |
+          bash ${LTP_RUN_CI_SCRIPT_PATH} unit-tests-nvidia-h200-1n8g
+  amd-mi300x-1n8g:
+    name: amd-mi300x-1n8g
+    runs-on: unit-tests
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v3
+      - name: Test target branch
+        run: |
+          bash ${LTP_RUN_CI_SCRIPT_PATH} unit-tests-amd-mi300x-1n8g
