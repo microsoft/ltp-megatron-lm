@@ -35,7 +35,7 @@ def pytest_sessionfinish(session, exitstatus):
         session.exitstatus = 0
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="module", autouse=True)
 def cleanup():
     yield
     if torch.distributed.is_initialized():
