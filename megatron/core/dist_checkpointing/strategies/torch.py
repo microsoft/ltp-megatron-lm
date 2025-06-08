@@ -1,6 +1,7 @@
 # Copyright (c) 2022-2023, NVIDIA CORPORATION.  All rights reserved.
 
 """ Strategies using PyTorch distributed.checkpoint as an underlying format. """
+import gc
 import io
 import os
 import pickle
@@ -790,6 +791,9 @@ class TorchDistSaveShardedStrategy(AsyncSaveShardedStrategy):
         def finalize_fn():
             save_state_dict_async_finalize(*save_state_dict_ret)
             torch.distributed.barrier()
+            # manually gc to avoid memory leak
+            gc.collect()
+            torch.cuda.empty_cache()
 
         return AsyncRequest(save_fn, save_args, [finalize_fn], preload_fn=preload_fn)
 
