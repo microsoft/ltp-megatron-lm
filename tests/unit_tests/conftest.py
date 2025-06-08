@@ -35,10 +35,18 @@ def pytest_sessionfinish(session, exitstatus):
         session.exitstatus = 0
 
 
-@pytest.fixture(scope="module", autouse=True)
+@pytest.fixture(scope="session", autouse=True)
 def cleanup():
     yield
     if torch.distributed.is_initialized():
+        torch.distributed.barrier()
+        torch.distributed.destroy_process_group()
+
+
+@pytest.fixture(scope="class")
+def cleanup_nccl():
+    yield
+    if torch.distributed.is_initialized() and torch.distributed.get_backend() == "nccl":
         torch.distributed.barrier()
         torch.distributed.destroy_process_group()
 
