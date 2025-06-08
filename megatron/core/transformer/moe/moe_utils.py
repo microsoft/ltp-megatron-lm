@@ -629,6 +629,47 @@ def save_to_aux_losses_tracker(
     tracker[name]["avg_group"] = avg_group
 
 
+def save_to_tokens_per_expert_tracker(
+    name: str,
+    tokens_per_expert: torch.Tensor,
+    layer_number: int,
+    num_layers: int,
+    reduce_group: torch.distributed.ProcessGroup = None,
+    avg_group: torch.distributed.ProcessGroup = None,
+):
+    """Save the tokens per expert for logging.
+    This function saves the tokens per expert for a specific layer in the
+    `moe_layer_wise_logging_tracker` dictionary.
+
+    Args:
+        name (str): The name of the metric.
+        tokens_per_expert (torch.Tensor): The tokens per expert tensor.
+        layer_number (int): Layer index of the metric.
+        num_layers (int): The number of total layers.
+        reduce_group (torch.distributed.ProcessGroup): The group for reducing the metric.
+        avg_group (torch.distributed.ProcessGroup): The group for averaging the metric.
+    """
+    # Skip logging if layer_number is None.
+    if layer_number is None:
+        if torch.distributed.is_initialized():
+            if torch.distributed.get_rank() == 0:
+                print("WARNING: layer_number is None in save_to_tokens_per_expert_tracker.")
+        return
+
+    tracker = parallel_state.get_moe_layer_wise_logging_tracker()
+    tokens_per_expert = tokens_per_expert.to(torch.float32)
+    if name not in tracker:
+        tracker[name] = {}
+        tracker[name]["values"] = torch.zeros([num_layers, tokens_per_expert.size(0)], device=tokens_per_expert.device)
+    tracker[name]["reduce_group"] = reduce_group
+    tracker[name]["avg_group"] = avg_group
+    if tracker[name]["values"][layer_number - 1] is None:
+        tracker[name]["values"][layer_number - 1]  = tokens_per_expert.detach().clone()
+    else:
+        # Aggregate the tokens per expert for the layer across batches.
+        tracker[name]["values"][layer_number - 1]  += tokens_per_expert.detach()
+
+
 def clear_aux_losses_tracker():
     """Clear the auxiliary losses."""
     tracker = parallel_state.get_moe_layer_wise_logging_tracker()
@@ -696,8 +737,8 @@ def track_moe_metrics(
     else:
         raise ValueError(f"Invalid moe_layer_freq: {moe_layer_freq}")
 
-    if writer is not None:
-        aux_losses = {k: v['values'].float() * loss_scale for k, v in tracker.items()}
+    if writer is not None or wandb_writer is not None:
+        aux_losses = {k: v['values'].float() * loss_scale for k, v in tracker.items() if 'loss' in k}
         for name, loss_list in aux_losses.items():
             if total_loss_dict is not None:
                 if name not in total_loss_dict:
@@ -708,10 +749,11 @@ def track_moe_metrics(
             # currently when using add_scalars,
             # torch.utils.add_scalars makes each timer its own run, which
             # polutes the runs list, so we just add each as a scalar
-            writer.add_scalar(name, loss_list.sum() / num_moe_layers, iteration)
-            if per_layer_logging:
-                for i, loss in enumerate(loss_list.tolist()):
-                    writer.add_scalar(f"moe/{name}_layer_{i}", loss, iteration)
+            if writer:
+                writer.add_scalar(name, loss_list.sum() / num_moe_layers, iteration)
+                if per_layer_logging:
+                    for i, loss in enumerate(loss_list.tolist()):
+                        writer.add_scalar(f"moe/{name}_layer_{i}", loss, iteration)
 
             # W&B logging lacks support for logging multiple scalars simultaneously.
             # As a workaround, we log each scalar individually first, then we can create
@@ -726,7 +768,35 @@ def track_moe_metrics(
                         },
                         iteration,
                     )
+        # --- Log token metrics ---
+        token_metrics = {k: v['values'].float() for k, v in tracker.items() if 'tokens_per_expert' in k}
+        token_stat_metrics = {}
+        # Compute per-layer stats across experts, it will calculate the max, mean,
+        # and min values across the experts for that layer.
+        for name, metric_list in token_metrics.items():
+            token_stat_metrics[f'{name}_mean'] = metric_list.mean(dim=1)
+            token_stat_metrics[f'{name}_max'] = metric_list.max(dim=1).values
+            token_stat_metrics[f'{name}_min'] = metric_list.min(dim=1).values
 
+        for name, metric_list in token_stat_metrics.items():
+            # Compute overall average (across all layers)
+            mean_value = metric_list.mean()
+
+            # TensorBoard
+            if writer:
+                writer.add_scalar(name, mean_value, iteration)
+                if per_layer_logging:
+                    for i, val in enumerate(metric_list.tolist()):
+                        writer.add_scalar(f"moe/{name}_layer_{i}", val, iteration)
+
+            # W&B
+            if wandb_writer:
+                wandb_writer.log({f"{name}": mean_value}, iteration)
+                if per_layer_logging:
+                    wandb_writer.log(
+                        {f"moe/{name}_layer_{i}": val for i, val in enumerate(metric_list.tolist())},
+                        iteration,
+                    )
     clear_aux_losses_tracker()
 
 

@@ -25,6 +25,7 @@ from megatron.core.transformer.enums import AttnBackend
 from megatron.core.transformer.heterogeneous.heterogeneous_config import HeterogeneousTransformerConfig
 from megatron.core.utils import (
     get_torch_version,
+    init_method_normal,
     is_torch_min_version,
 )
 from megatron.training.activations import squared_relu
@@ -1031,6 +1032,8 @@ def core_transformer_config_from_args(args, config_class=None):
     if args.init_method_xavier_uniform:
         kw_args['init_method'] = torch.nn.init.xavier_uniform_
         kw_args['scaled_init_method'] = torch.nn.init.xavier_uniform_
+    if args.output_layer_init_method_normal:
+        kw_args['output_layer_init_method'] = init_method_normal(args.output_layer_init_method_normal_std)
     if args.group_query_attention:
         kw_args['num_query_groups'] = args.num_query_groups
     else:
@@ -1318,6 +1321,9 @@ def _add_network_size_args(parser):
                        'We compute the average of the MTP losses across all depths, '
                        'and multiply it the scaling factor to obtain the overall MTP loss, '
                        'which serves as an additional training objective.')
+    group.add_argument('--cross-entropy-label-smoothing', type=float, default=0,
+                       help='Smoothing factor for vocab_parallel_cross_entropy, must be in range [0.0, 1.0). '
+                       'Default is no smoothing (=0.0).')
     return parser
 
 
@@ -1816,6 +1822,13 @@ def _add_initialization_args(parser):
                        'distribution used for weight initialization.')
     group.add_argument('--init-method-xavier-uniform', action='store_true',
                        help='Enable Xavier uniform parameter initialization')
+    group.add_argument('--output-layer-init-method-normal', action='store_true',
+                       help='Use normal distribution weight initialization for output layers.')
+    group.add_argument('--output-layer-init-method-normal-std', type=float, default=0.02,
+                       help='Standard deviation of the zero mean normal '
+                       'distribution used for weight initialization for output layers.')
+    group.add_argument('--use-kaiming-init-for-moe-router', action='store_true',
+                       help='Use Kaiming initialization for MoE router weights.')
 
     return parser
 
@@ -1990,6 +2003,17 @@ def _add_checkpointing_args(parser):
                             ' Check StrictHandling docs for flags meaning.'
                             ' NOTE: This flag controls only distributed checkpoint'
                             ' load from storage, not loading state dict into the model.')
+    group.add_argument('--infer-rampup-batch-size', action='store_true',
+                       help='Infer rampup batch size from checkpoint, cannot '
+                       'set rampup batch size at the same time.')
+    group.add_argument('--ckpt-upload-blob-path', type=str, default=None,
+                       help='Azure blob path for checkpoint upload, do not include checkpoint name.')
+    group.add_argument('--ckpt-upload-blob-sas-path', type=str, default=None,
+                       help='Path to the file which contains Azure blob SAS token for checkpoint upload.')
+    group.add_argument('--ckpt-upload-blob-concurrency', type=str, default='AUTO',
+                       help='Number of concurrent requests that can occur during Azure blob upload.')
+    group.add_argument('--ckpt-isolated-save', action='store_true',
+                       help='Whether the checkpoints need to be saved to multiple isolated places.')
     return parser
 
 
@@ -2239,6 +2263,8 @@ def _add_tokenizer_args(parser):
                        help='Number of special tokens in tiktoken tokenizer')
     group.add_argument('--tiktoken-special-tokens', type=str, nargs='+', default=None,
                        help='List of tiktoken special tokens, needs to have ["<unk>", "<s>", "</s>"]')
+    group.add_argument('--tokenizer-huggingface-trust-remote-code', action='store_true',
+                       help='Set trust_remote_code=True for HuggingFace tokenizer.')
     return parser
 
 
@@ -2319,6 +2345,13 @@ def _add_data_args(parser):
                        help='Number of parallel threads per rank for dataset builder')
     group.add_argument('--s3-cache-path', type=str, default=None,
                        help='Path to cache index files when using s3 dataloader')
+    group.add_argument('--dataset-reset-key', type=str, default='',
+                       help='Reset key for the dataset, change this key for '
+                       'new dataset to reset indecies in dataloader.')
+    group.add_argument('--dataset-offset', type=int, default=0,
+                       help='Index offset to previous datasets in dataloader.')
+    group.add_argument('--scale-shuffle', action='store_true',
+                       help='Whether to enable scale-shuffle at lowest-level datasets.')
     return parser
 
 
@@ -2497,6 +2530,8 @@ def _add_moe_args(parser):
     group.add_argument('--moe-layer-recompute', action='store_true',
                        help='Enable checkpointing for moe_layer, should be used when memory is not sufficient. '
                        'Deprecated. Use "--recompute-granularity selective --recompute-modules moe" instead.')
+    group.add_argument('--moe-layer-recompute-freq', type=moe_freq_type, default=1,
+                       help='Frequency to enable MoE layer recompute.')
     group.add_argument('--moe-extended-tp', action='store_true',
                        help='Deprecated. Use --expert-tensor-parallel-size instead.')
     group.add_argument('--moe-use-upcycling', action='store_true',
@@ -2518,6 +2553,10 @@ def _add_moe_args(parser):
                        choices=['softmax', 'sigmoid'],
                        default='softmax',
                        help='Score function for MoE TopK routing. Can be "softmax" or "sigmoid".')
+    group.add_argument('--moe-aux-loss-score-function', type=str,
+                       choices=['softmax', 'sigmoid'],
+                       default='softmax',
+                       help='Score function for computing MoE aux loss. Can be "softmax" or "sigmoid".')
     group.add_argument('--moe-router-topk', type=int, default=2,
                        help='Number of experts to route to for each token. The default is 2.')
     group.add_argument('--moe-router-pre-softmax', action='store_true',
@@ -2538,6 +2577,10 @@ def _add_moe_args(parser):
                        'The expert bias is updated based on the number of assigned tokens to each expert in a global batch, '
                        'where the bias is increased for the experts with less assigned tokens and decreased for the experts with more assigned tokens. '
                        'The default value 1e-3 is same as that used in DeepSeekV3.')
+    group.add_argument('--moe-router-gradient-scale', type=float, default=None,
+                       help='Gradient scale of MoE router weights.')
+    group.add_argument('--moe-router-gradient-scale-normalize', action='store_true',
+                       help='When MoE router gradient scaling is enabled, further normalize the weights.')
     group.add_argument('--moe-aux-loss-coeff', type=float, default=0.0,
                        help='Scaling coefficient for the aux loss: a starting value of 1e-2 is recommended.')
     group.add_argument('--moe-z-loss-coeff', type=float, default=None,

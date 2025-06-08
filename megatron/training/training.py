@@ -46,7 +46,7 @@ except ImportError:
 
 from megatron.core.distributed import finalize_model_grads
 from megatron.core.enums import ModelType
-from megatron.core.optimizer import get_megatron_optimizer, OptimizerConfig
+from megatron.core.optimizer import get_megatron_optimizer, OptimizerConfig, ChainedOptimizer, _update_min_and_max_lr_in_param_groups
 from megatron.core.rerun_state_machine import (
     get_rerun_state_machine,
     destroy_rerun_state_machine,
@@ -85,6 +85,7 @@ from megatron.core.num_microbatches_calculator import (
     update_num_microbatches)
 
 from .async_utils import maybe_finalize_async_save
+from .ckpt_utils import CkptUploadQueue
 from .utils import (
     append_to_progress_log,
     calc_params_l2_norm,
@@ -846,6 +847,9 @@ def pretrain(
     maybe_finalize_async_save(blocking=True, terminate=True)
     ft_integration.on_checkpointing_end(is_async_finalization=True)
 
+    if args.local_rank == 0 and args.ckpt_upload_blob_path and args.ckpt_upload_blob_sas_path:
+        CkptUploadQueue().stop()
+
     one_logger and one_logger.log_metrics({
         'app_finish_time': one_logger_utils.get_timestamp_in_ms()
     })
@@ -1183,6 +1187,21 @@ def setup_model_and_optimizer(model_provider_func,
         if args.fp16:
             optimizer.reload_model_params()
 
+    # Call below again so that the load checkpoint values are overridden again by the input values
+    # https://github.com/NVIDIA/Megatron-LM/issues/1138#issuecomment-2459920646
+    if args.override_opt_param_scheduler:
+        print_rank_0("Overriding optimizer from checkpoint")
+        print_rank_0(f"Checkpoint optimizer type: {type(optimizer)}")
+        opt_list = optimizer.chained_optimizers if isinstance(optimizer, ChainedOptimizer) else [optimizer]
+        for opt in opt_list:
+            opt.param_groups = _update_min_and_max_lr_in_param_groups(
+                opt.param_groups,
+                lr=config.lr,
+                min_lr=config.min_lr,
+                decoupled_lr=config.decoupled_lr,
+                decoupled_min_lr=config.decoupled_min_lr,
+            )
+
     # Convert checkpoint format.
     if args.ckpt_convert_format is not None:
         load_ckpt_format = args.ckpt_format
@@ -1494,8 +1513,10 @@ def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_r
     if args.num_experts is not None:
         moe_loss_scale = 1 / get_num_microbatches()
         track_names = []
-        if args.moe_router_load_balancing_type in ["aux_loss", "seq_aux_loss"]:
+        if args.moe_router_load_balancing_type in ["aux_loss", "seq_aux_loss", "global_batch_loss"]:
             track_names.append("load_balancing_loss")
+            if args.moe_router_load_balancing_type == "global_batch_loss":
+                track_names.append("global_batch_tokens_per_expert")
         if args.moe_z_loss_coeff is not None:
             track_names.append("z_loss")
         track_moe_metrics(

@@ -199,13 +199,25 @@ class BlendedMegatronDatasetBuilder(object):
         ##
         elif self.config.blend:
             prefixes, weights = self.config.blend
+            scale_shuffle_weights = None
+            if self.config.scale_shuffle:
+                if weights is None:
+                    log_single_rank(
+                        logger,
+                        logging.INFO,
+                        f"scale_shuffle is enabled but weights are None, setting all weights to 1.0",
+                    )
+                    scale_shuffle_weights = [1.0] * len(prefixes)
+                else:
+                    scale_shuffle_weights = weights
+                    weights = None
             if weights is not None:
                 weights = normalize(weights)
 
             split = self.config.split_matrix
 
             # Blend consists of a single prefix
-            if len(prefixes) == 1 and weights is None:
+            if len(prefixes) == 1 and weights is None and not self.config.scale_shuffle:
                 return self._build_megatron_dataset_splits(prefixes[0], split, self.sizes)
 
             # Build the mid-level datasets
@@ -222,7 +234,7 @@ class BlendedMegatronDatasetBuilder(object):
 
             # Build each dataset in parallel
             megatron_datasets = self._build_megatron_datasets_parallel(
-                prefixes, split, sizes_per_dataset_buffer
+                prefixes, split, sizes_per_dataset_buffer, scale_shuffle_weights
             )
 
             # Build the top-level datasets
@@ -277,12 +289,24 @@ class BlendedMegatronDatasetBuilder(object):
                 # Blend is provided for the split
                 blend = self.config.blend_per_split[i]
                 if blend is not None:
+                    scale_shuffle_weights = None
+                    if self.config.scale_shuffle:
+                        if weights is None:
+                            log_single_rank(
+                                logger,
+                                logging.INFO,
+                                f"scale_shuffle is enabled but weights are None, setting all weights to 1.0",
+                            )
+                            scale_shuffle_weights = [1.0] * len(prefixes)
+                        else:
+                            scale_shuffle_weights = weights
+                            weights = None
                     prefixes, weights = blend
                     if weights is not None:
                         weights = normalize(weights)
 
                     # Blend consists of a sigle prefix
-                    if len(prefixes) == 1:
+                    if len(prefixes) == 1 and not self.config.scale_shuffle:
                         blended_datasets[i] = self._build_megatron_dataset_splits(
                             prefixes[0], split_spoof, sizes_spoof
                         )[i]
@@ -305,7 +329,7 @@ class BlendedMegatronDatasetBuilder(object):
 
                     # Build each dataset in parallel
                     megatron_datasets = self._build_megatron_datasets_parallel(
-                        prefixes, split_spoof, sizes_per_dataset_buffer
+                        prefixes, split_spoof, sizes_per_dataset_buffer, scale_shuffle_weights
                     )[i]
 
                     # Build top-level dataset
@@ -341,7 +365,8 @@ class BlendedMegatronDatasetBuilder(object):
             return blended_datasets
 
     def _build_megatron_datasets_parallel(
-        self, prefixes: List[str], split: List[float], sizes_per_dataset: List[List[int]]
+        self, prefixes: List[str], split: List[float], sizes_per_dataset: List[List[int]],
+        scale_shuffle_weights: Optional[List[float]],
     ) -> List[List[Optional[MegatronDataset]]]:
         """Build the megatron datasets for a list of prefixes in parallel
 
@@ -352,6 +377,9 @@ class BlendedMegatronDatasetBuilder(object):
 
             sizes_per_dataset (List[List[int]]): The number of samples to request
             per MegatronDataset per spilt
+
+            scale_shuffle_weights (Optional[List[float]]): When scale-shuffle
+            is enabled, weight for each MegatronDataset.
 
         Returns:
             List[List[Optional[MegatronDataset]]]: For each split, have a list of
@@ -365,6 +393,7 @@ class BlendedMegatronDatasetBuilder(object):
             prefixes: List[str],
             split: List[float],
             sizes_per_dataset: List[List[int]],
+            scale_shuffle_weights: Optional[List[float]],
         ) -> None:
             with ThreadPoolExecutor(max_workers=num_workers) as executor:
                 all_futures = []
@@ -376,6 +405,7 @@ class BlendedMegatronDatasetBuilder(object):
                             split,
                             sizes_per_dataset[i],
                             False,  # synchronize_ranks, barrier is called in this function
+                            None if scale_shuffle_weights is None else scale_shuffle_weights[i],
                         )
                     )
                 for future in all_futures:
@@ -401,7 +431,7 @@ class BlendedMegatronDatasetBuilder(object):
                     # i.e. meant for serial build, do not scale up.
                     num_workers *= min(2, max(1, torch.cuda.device_count()))
                 _threading_helper(
-                    megatron_datasets, num_workers, prefixes, split, sizes_per_dataset
+                    megatron_datasets, num_workers, prefixes, split, sizes_per_dataset, scale_shuffle_weights
                 )
 
             torch.distributed.barrier()
@@ -414,10 +444,11 @@ class BlendedMegatronDatasetBuilder(object):
                     prefixes,
                     split,
                     sizes_per_dataset,
+                    scale_shuffle_weights,
                 )
         else:
             _threading_helper(
-                megatron_datasets, num_dataset_builder_threads, prefixes, split, sizes_per_dataset
+                megatron_datasets, num_dataset_builder_threads, prefixes, split, sizes_per_dataset, scale_shuffle_weights
             )
 
         return megatron_datasets
@@ -428,6 +459,7 @@ class BlendedMegatronDatasetBuilder(object):
         split: List[float],
         sizes: List[int],
         synchronize_ranks: bool = True,
+        scale_shuffle_weight: Optional[float] = None,
     ) -> List[Optional[MidLevelDataset]]:
         """Build each MidLevelDataset split from a single LowLevelDataset
 
@@ -442,6 +474,8 @@ class BlendedMegatronDatasetBuilder(object):
             synchronize_ranks (bool): Whether to call barrier for rank-0 / barrier / other-ranks
                 behavior. Set to False when we enforce this behavior at higher level.
 
+            scale_shuffle_weight (Optional[float]): When scale-shuffle is enabled, weight for current dataset splits.
+
         Returns:
             List[Optional[MidLevelDataset]]: The MidLevelDataset (or None) per split
         """
@@ -453,7 +487,10 @@ class BlendedMegatronDatasetBuilder(object):
             return [None] * len(Split)
 
         # Build the low level dataset
-        low_level_dataset = self.cls.build_low_level_dataset(dataset_path, self.config)
+        dataset_args = []
+        if scale_shuffle_weight is not None:
+            dataset_args.append(scale_shuffle_weight)
+        low_level_dataset = self.cls.build_low_level_dataset(dataset_path, self.config, *dataset_args)
 
         # Build the split indices for the low level dataset
         num_elements = self.cls.numel_low_level_dataset(low_level_dataset)
@@ -472,6 +509,9 @@ class BlendedMegatronDatasetBuilder(object):
             if split[i] is None:
                 mid_level_datasets.append(None)
             else:
+                dataset_args = []
+                if scale_shuffle_weight is not None:
+                    dataset_args.append(scale_shuffle_weight)
                 mid_level_datasets.append(
                     self.build_generic_dataset(
                         self.cls,
@@ -483,6 +523,7 @@ class BlendedMegatronDatasetBuilder(object):
                         sizes[i],
                         _split,
                         self.config,
+                        *dataset_args
                     )
                 )
 
