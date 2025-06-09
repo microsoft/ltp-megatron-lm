@@ -63,8 +63,7 @@ class Utils:
             Utils.store_no += 1
 
             torch.distributed.init_process_group(
-                backend='nccl', world_size=Utils.world_size, rank=Utils.rank, store=store,
-                device_id=torch.device('cuda', Utils.rank),
+                backend='nccl', world_size=Utils.world_size, rank=Utils.rank, store=store
             )
 
             torch.distributed.barrier()
