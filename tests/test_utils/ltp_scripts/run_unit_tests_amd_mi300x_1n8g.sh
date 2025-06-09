@@ -1,5 +1,10 @@
 set -e
 
+# Fix "corrupted size vs. prev_size Fatal Python error: Aborted" error
+# when using device_id in dist.init_process_group on ROCm
+apt-get install -y libtcmalloc-minimal4
+export LD_PRELOAD="/usr/lib/x86_64-linux-gnu/libtcmalloc_minimal.so.4"
+
 pip install -r requirements_ci.txt
 pip install mock
 
