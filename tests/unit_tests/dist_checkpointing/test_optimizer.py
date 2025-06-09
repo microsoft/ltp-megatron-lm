@@ -453,7 +453,6 @@ class TestFP32Optimizer:
                 assert not any(map(bool, diffs)), diffs
 
 
-@pytest.mark.usefixtures("cleanup_nccl")
 class TestOptimizerResharding:
     def setup_method(self, method):
         pass
