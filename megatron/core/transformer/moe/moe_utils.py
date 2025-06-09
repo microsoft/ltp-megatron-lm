@@ -773,10 +773,16 @@ def track_moe_metrics(
         token_stat_metrics = {}
         # Compute per-layer stats across experts, it will calculate the max, mean,
         # and min values across the experts for that layer.
+        if wandb_writer:
+            wandb_info = dict()
         for name, metric_list in token_metrics.items():
             token_stat_metrics[f'{name}_mean'] = metric_list.mean(dim=1)
             token_stat_metrics[f'{name}_max'] = metric_list.max(dim=1).values
             token_stat_metrics[f'{name}_min'] = metric_list.min(dim=1).values
+            if wandb_writer is not None:
+                wandb_info.update({f'moe-expert/{name}_layer{i}_expert{j}': metric_list[i][j].item() for i in range(len(metric_list)) for j in range(len(metric_list[i]))})
+        if wandb_writer is not None:
+            wandb_writer.log(wandb_info, iteration)
 
         for name, metric_list in token_stat_metrics.items():
             # Compute overall average (across all layers)
