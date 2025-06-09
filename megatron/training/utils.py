@@ -221,21 +221,16 @@ class NormalizationCalculator:
             "embedding": ["word_embeddings.weight", ],
             "output_layer": ["weight"],
             "final_layernorm": ["weight"],
-            "decoder": ["self_attention.linear_proj.weight", 
+            "decoder": [
+                      "self_attention.q_layernorm.weight", 
+                      "self_attention.k_layernorm.weight",
                       "self_attention.linear_qkv.layer_norm_weight",
                       "self_attention.linear_qkv.weight",
-                      "mlp.linear_fc2.weight",
-                      "mlp.linear_fc1.layer_norm_weight",
-                      "mlp.linear_fc1.weight",
-                      "input_layernorm.weight",
-                      "self_attention.linear_q_proj.weight",
-                      "self_attention.linear_kv_down_proj.weight",
-                      "self_attention.linear_kv_up_proj.layer_norm_weight",
-                      "self_attention.linear_kv_up_proj.weight",
+                      "self_attention.linear_proj.weight",
+                      "mlp.experts.weight1",
+                      "mlp.experts.weight2",
                       "pre_mlp_layernorm.weight",
                       "mlp.router.weight",
-                      "mlp.shared_experts.linear_fc2.weight",
-                      "mlp.shared_experts.linear_fc1.weight",
                     ]
         }
 
@@ -548,7 +543,7 @@ class NormalizationCalculator:
         if not isinstance(model, list):
             print("Warning: calc_params_l2_norm_per_param only support list of models")
             model = [model]
-        tensor_dict_list = [dict(model_chunck.named_parameters()) for model_chunck in model]
+        tensor_dict_list = [dict(model_chunk.named_parameters()) for model_chunk in model]
         return self.calc_l2_norm_list(tensor_dict_list)
     
 
