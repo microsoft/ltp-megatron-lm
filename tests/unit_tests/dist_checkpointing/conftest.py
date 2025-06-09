@@ -1,7 +1,6 @@
 from unittest import mock
 
 import pytest
-import torch
 
 from megatron.core.dist_checkpointing.strategies.base import StrategyAction, get_default_strategy
 
@@ -9,14 +8,6 @@ from megatron.core.dist_checkpointing.strategies.base import StrategyAction, get
 def pytest_sessionfinish(session, exitstatus):
     if exitstatus == 5:
         session.exitstatus = 0
-
-
-@pytest.fixture(scope="class", autouse=True)
-def cleanup_nccl():
-    yield
-    if torch.distributed.is_initialized() and torch.distributed.get_backend() == "nccl":
-        torch.distributed.barrier()
-        torch.distributed.destroy_process_group()
 
 
 @pytest.fixture(scope="class")

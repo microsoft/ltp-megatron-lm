@@ -43,6 +43,14 @@ def cleanup():
         torch.distributed.destroy_process_group()
 
 
+@pytest.fixture(scope="class")
+def cleanup_nccl():
+    yield
+    if torch.distributed.is_initialized() and torch.distributed.get_backend() == "nccl":
+        torch.distributed.barrier()
+        torch.distributed.destroy_process_group()
+
+
 @pytest.fixture(scope="function", autouse=True)
 def set_env():
     if is_te_min_version("1.3"):
