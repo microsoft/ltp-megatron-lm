@@ -140,43 +140,65 @@ class TestPipelineParallelTransformerBlock:
     @pytest.mark.parametrize(
         "num_layers, pipeline_model_parallel_size, virtual_pipeline_model_parallel_size, "
         "account_for_embedding_in_pipeline_split, account_for_loss_in_pipeline_split, "
-        "first_pipeline_num_layers, last_pipeline_num_layers, should_assert_error",
+        "first_pipeline_num_layers, last_pipeline_num_layers, first_pipeline_num_layers_split, "
+        "last_pipeline_num_layers_split, should_assert_error",
         [
             # Last pipeline stage has specified layers
-            (60, 5, None, False, False, None, 4, False),
+            (60, 5, None, False, False, None, 4, None, None, False),
             # Uneven PP 6*[8]+[6]+[6]=60
-            (60, 8, None, False, False, 6, 6, False),
+            (60, 8, None, False, False, 6, 6, None, None, False),
             # Even PP
-            (64, 4, None, False, False, None, None, False),
+            (64, 4, None, False, False, None, None, None, None, False),
             # Even VPP
-            (64, 4, 8, False, False, None, None, False),
+            (64, 4, 8, False, False, None, None, None, None, False),
             # First pipeline stage has specified layers
             # Should distribute remaining layers evenly among other stages
-            (60, 6, None, False, False, 5, None, False),
+            (60, 6, None, False, False, 5, None, None, None, False),
             # Uneven distribution leading to assertion error
-            (101, 8, None, False, False, 13, 13, True),
+            (101, 8, None, False, False, 13, 13, None, None, True),
             # Include embedding in pipeline split without virtual PP
-            (63, 4, None, True, False, None, None, False),
+            (63, 4, None, True, False, None, None, None, None, False),
             # Include loss in pipeline split without virtual PP
-            (63, 4, None, False, True, None, None, False),
+            (63, 4, None, False, True, None, None, None, None, False),
             # Include embedding and loss in pipeline split without virtual PP
-            (62, 4, None, True, True, None, None, False),
+            (62, 4, None, True, True, None, None, None, None, False),
             # Include embedding and loss with virtual PP
-            (62, 4, 2, True, True, None, None, False),
+            (62, 4, 2, True, True, None, None, None, None, False),
             # num_layers not divisible by pipeline size without embedding/loss
-            (65, 4, None, False, False, None, None, True),
+            (65, 4, None, False, False, None, None, None, None, True),
             # num_layers not divisible by pipeline size with embedding/loss
-            (65, 4, None, True, True, None, None, True),
+            (65, 4, None, True, True, None, None, None, None, True),
             # Uneven distribution with specified first pipeline layers causing error
-            (61, 4, None, False, False, 12, None, True),
+            (61, 4, None, False, False, 12, None, None, None, True),
             # Too few layers for the number of pipeline stages
-            (2, 4, None, False, False, None, None, True),
+            (2, 4, None, False, False, None, None, None, None, True),
             # Uneven PP with embedding included (should assert per code)
-            (60, 6, None, True, False, 5, 5, True),
+            (60, 6, None, True, False, 5, 5, None, None, True),
             # Virtual PP where num_layers not divisible by total virtual stages
-            (50, 2, 7, False, False, None, None, True),
+            (50, 2, 7, False, False, None, None, None, None, True),
             # Edge case where num_layers per virtual rank is zero
-            (4, 4, 4, False, False, None, None, True),
+            (4, 4, 4, False, False, None, None, None, None, True),
+            # Auto first/last stage split
+            (64, 8, 2, False, False, 9, 7, None, None, False),
+            (64, 8, 4, False, False, 10, 6, None, None, False),
+            (64, 8, 4, False, False, 13, 3, None, None, True),
+            (64, 8, 2, True, False, 9, 7, None, None, True),
+            (64, 8, 2, False, True, 9, 7, None, None, True),
+            (64, 8, 2, True, True, 9, 7, None, None, True),
+            # Manual first/last stage split
+            (64, 8, 4, False, False, 9, 7, [2, 2, 2, 3], [2, 2, 2, 1], False),
+            (64, 8, 2, False, False, 9, 7, [5, 4], [4, 3], False),
+            (64, 8, 2, True, False, 9, 7, [5, 4], [4, 3], True),
+            (64, 8, 2, False, True, 9, 7, [5, 4], [4, 3], True),
+            (64, 8, 2, True, True, 9, 7, [5, 4], [4, 3], True),
+            (64, 8, 2, False, False, 9, 7, [3, 3, 3], [4, 3], True),
+            (64, 8, 2, False, False, 9, 7, [5, 4], [2, 3, 2], True),
+            (64, 8, 2, False, False, 9, 7, [-1, 10], [4, 3], True),
+            (64, 8, 2, False, False, 9, 7, [5, 4], [9, -2], True),
+            (64, 8, 2, False, False, 9, 7, [0, 9], [4, 3], True),
+            (64, 8, 2, False, False, 9, 7, [5, 4], [7, 0], True),
+            (64, 8, 2, False, False, 9, 7, [5, 5], [4, 3], True),
+            (64, 8, 2, False, False, 9, 7, [5, 4], [4, 4], True),
         ],
     )
     def test_layer_builder(
@@ -188,6 +210,8 @@ class TestPipelineParallelTransformerBlock:
         account_for_loss_in_pipeline_split,
         first_pipeline_num_layers,
         last_pipeline_num_layers,
+        first_pipeline_num_layers_split,
+        last_pipeline_num_layers_split,
         should_assert_error,
     ):
         Utils.fake_initialize_model_parallel(
@@ -207,6 +231,8 @@ class TestPipelineParallelTransformerBlock:
                 account_for_loss_in_pipeline_split=account_for_loss_in_pipeline_split,
                 num_layers_in_first_pipeline_stage=first_pipeline_num_layers,
                 num_layers_in_last_pipeline_stage=last_pipeline_num_layers,
+                decoder_first_pipeline_num_layers_split=first_pipeline_num_layers_split,
+                decoder_last_pipeline_num_layers_split=last_pipeline_num_layers_split,
                 pipeline_dtype=torch.bfloat16,
                 hidden_size=128,
                 num_attention_heads=16,
