@@ -1,5 +1,9 @@
 set -e
 
+# Fix "Resource temporarily unavailable Fatal Python error: Aborted" issue on ROCm
+apt-get install -y libtcmalloc-minimal4
+export LD_PRELOAD="/usr/lib/x86_64-linux-gnu/libtcmalloc_minimal.so.4"
+
 pip install -r requirements_ci.txt
 pip install mock
 
