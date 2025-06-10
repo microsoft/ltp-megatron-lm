@@ -27,7 +27,7 @@ from megatron.legacy import fused_kernels
 from megatron.training import get_adlr_autoresume, get_args, get_tensorboard_writer
 from megatron.training.arguments import parse_args, validate_args
 from megatron.training.async_utils import init_persistent_async_worker
-from megatron.training.checkpointing import load_args_from_checkpoint
+from megatron.training.checkpointing import load_args_from_checkpoint, get_args_from_checkpoint, checkpoint_exists
 from megatron.training.global_vars import set_global_variables
 from megatron.training.yaml_arguments import validate_yaml
 
@@ -76,6 +76,35 @@ def initialize_megatron(
             "before initializing LocalCheckpointManager."
         )
         load_args_from_checkpoint(args)
+
+    # Update default args from checkpoint
+    if args.load and checkpoint_exists(args.load):
+        ckpt_args = get_args_from_checkpoint(args)
+        # Recalculate global batch size for rampup
+        assert not(args.infer_rampup_batch_size and args.rampup_batch_size), \
+            "Not allowed to set --rampup-batch-size when using --infer-rampup-batch-size"
+        if args.infer_rampup_batch_size and args.rampup_batch_size is None:
+            prev_avg_batch_size = ckpt_args.consumed_train_samples // ckpt_args.checkpoint_iteration
+            if args.global_batch_size != prev_avg_batch_size:
+                args.rampup_batch_size = [
+                    prev_avg_batch_size,
+                    args.global_batch_size - prev_avg_batch_size,
+                    prev_avg_batch_size * ckpt_args.checkpoint_iteration - 1,
+                ]
+                if args.rank == 0:
+                    print("> setting rampup_batch_size to:", *args.rampup_batch_size, sep=' ')
+        # Set dataset offset for dataloader
+        dataset_reset = (args.dataset_reset_key != getattr(ckpt_args, 'dataset_reset_key', ''))
+        args.dataset_offset = (
+            -ckpt_args.consumed_train_samples if dataset_reset else ckpt_args.dataset_offset
+        )
+        if args.rank == 0:
+            print("> setting dataset_offset to: {}, dataset_reset_key: {} -> {} (reset {})".format(
+                args.dataset_offset,
+                getattr(ckpt_args, 'dataset_reset_key', ''),
+                args.dataset_reset_key,
+                dataset_reset,
+            ))
 
     if args.async_save and args.use_persistent_ckpt_worker:
         init_persistent_async_worker()

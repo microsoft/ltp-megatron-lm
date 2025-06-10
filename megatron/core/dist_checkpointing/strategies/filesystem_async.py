@@ -174,7 +174,7 @@ class FileSystemWriterAsync(FileSystemWriter):
         transform_list = [self.transforms] if hasattr(self, 'transforms') else []
         return (
             partial(self.write_preloaded_data_multiproc, transform_list),
-            partial(self.preload_tensors, self.write_buckets, True),
+            partial(self.preload_tensors, self.write_buckets, bool(not torch.version.hip)),
             [torch.distributed.get_rank(), self.write_buckets, self.results_queue],
         )
 

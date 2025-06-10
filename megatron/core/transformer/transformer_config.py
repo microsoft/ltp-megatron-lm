@@ -154,6 +154,10 @@ class TransformerConfig(ModelParallelConfig):
     multi_latent_attention: bool = False
     """Whether to use multi-latent attention."""
 
+    cross_entropy_label_smoothing: float = 0
+    """Smoothing factor for vocab_parallel_cross_entropy, must be in range [0.0, 1.0).
+       Default is no smoothing (=0.0)."""
+
     ####################
     # initialization
     ####################
@@ -177,6 +181,9 @@ class TransformerConfig(ModelParallelConfig):
     If True, initializes the model with the meta device. This is helpful for
     training of very large models. This feature is only works when custom fsdp is turned on.
     """
+
+    use_kaiming_init_for_moe_router: bool = False
+    """Use Kaiming initialization for MoE router weights."""
 
     ####################
     # mixed-precision
@@ -348,7 +355,7 @@ class TransformerConfig(ModelParallelConfig):
     """The load balancing strategy for the router. "aux_loss" corresponds to the load balancing loss
     used in GShard and SwitchTransformer; "seq_aux_loss" corresponds to the loss used in DeepSeekV2,
     which computes the loss for each individual sample; "sinkhorn" corresponds to the balancing
-    algorithm used in S-BASE; "global_batch" corresponds to the global batch load balancing loss
+    algorithm used in S-BASE; "global_batch_loss" corresponds to the global batch load balancing loss
     (see https://arxiv.org/abs/2501.11873 for details), and "none" implies no load balancing. The
     default is "aux_loss"."""
 
@@ -392,6 +399,9 @@ class TransformerConfig(ModelParallelConfig):
     moe_router_score_function: str = "softmax"
     """Score function for MoE routing. Can be "softmax" or "sigmoid"."""
 
+    moe_aux_loss_score_function: str = "softmax"
+    """Score function for computing MoE aux loss. Can be "softmax" or "sigmoid"."""
+
     moe_router_dtype: Optional[str] = None
     """Data type for routing and expert output weighted averaging. Using fp32 or fp64 can
     improve stability especially when the number of experts is large (e.g. finegrained-moe).
@@ -407,6 +417,12 @@ class TransformerConfig(ModelParallelConfig):
     in a global batch, where the bias is increased for the experts with less assigned tokens
     and decreased for the experts with more assigned tokens.
     The default value 1e-3 is same as that used in DeepSeekV3."""
+
+    moe_router_gradient_scale: float = None
+    """Gradient scale of MoE router weights."""
+
+    moe_router_gradient_scale_normalize: bool = False
+    """When MoE router gradient scaling is enabled, further normalize the weights."""
 
     moe_grouped_gemm: bool = False
     """When there are multiple experts per rank, compress multiple local (potentially small) gemms
@@ -459,6 +475,9 @@ class TransformerConfig(ModelParallelConfig):
 
     moe_layer_recompute: bool = False
     """Memory optimization: checkpointing moe_layer to save actiavtion memory."""
+
+    moe_layer_recompute_freq: int = None
+    """Frequency to enable MoE layer recompute."""
 
     moe_permute_fusion: bool = False
     """Fuse token rearrangement ops during token dispatching."""
