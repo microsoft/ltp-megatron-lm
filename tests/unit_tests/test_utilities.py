@@ -31,7 +31,7 @@ class Utils:
     rank = int(os.environ['LOCAL_RANK'])
     inited = False
     store = None
-    store_no = 0
+    store_idx = 0
 
     @staticmethod
     def initialize_distributed():
@@ -58,9 +58,9 @@ class Utils:
 
             # Use a PrefixStore to avoid accidental overrides of keys used by
             # different systems (e.g. RPC) in case the store is multi-tenant.
-            store = PrefixStore(f"default_pg_{Utils.store_no}", store)
+            store = PrefixStore(f"default_pg_{Utils.store_idx}", store)
             Utils.store = store
-            Utils.store_no += 1
+            Utils.store_idx += 1
 
             torch.distributed.init_process_group(
                 backend='nccl', world_size=Utils.world_size, rank=Utils.rank, store=store
