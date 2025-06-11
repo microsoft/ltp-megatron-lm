@@ -151,6 +151,10 @@ class ShardedTensor(ShardedBase):
             raise CheckpointingException(
                 f'`step` argument in the flattened range of a ShardedTensor is not supported.'
             )
+        if has_flattened_range and (self.flattened_range.start < 0 or self.flattened_range.stop < 0):
+            raise CheckpointingException(
+                f'Flattened range ({self.flattened_range}) should be non negative for {self}.'
+            )
 
     def global_slice(self) -> Tuple[Union[int, slice], ...]:
         """
