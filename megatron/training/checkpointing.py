@@ -571,9 +571,10 @@ def save_checkpoint(iteration, model, optimizer, opt_param_scheduler, num_floati
         def upload_finalize_fn():
             if args.ckpt_upload_blob_path and args.ckpt_upload_blob_sas_path:
                 iter_dir = os.path.basename(get_checkpoint_name(save_dir, iteration, return_base_dir=True))
-                CkptUploadQueue().add_upload_task([iter_dir])
-            else:
+                CkptUploadQueue().add_upload_task([iter_dir], upload_tracker_file=bool(args.rank == 0))
+            elif not getattr(save_checkpoint, "_has_skip_upload_printed", False):
                 print("Skip checkpoint upload due to missed blob path or SAS token")
+                save_checkpoint._has_skip_upload_printed = True
 
         if args.async_save:
             assert async_save_request is not None

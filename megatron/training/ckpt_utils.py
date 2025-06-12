@@ -7,6 +7,7 @@ from typing import List
 
 import torch
 
+from megatron.core import mpu
 from .global_vars import get_args
 
 
@@ -27,14 +28,18 @@ class CkptUploadQueue:
 
         self.azcopy_command = "azcopy copy --output-level essential --log-level WARNING --recursive"
         if args.ckpt_upload_blob_ingress_mbps > 0:
-            if args.ckpt_format == "torch_dist":
-                nnodes = args.world_size // torch.cuda.device_count()
-                self.azcopy_command += f" --cap-mbps {args.ckpt_upload_blob_ingress_mbps // nnodes}"
+            num_uploader = 1
+            if args.ckpt_format == "torch":
+                expert_dp_group_size = mpu.get_expert_data_parallel_world_size()
+                if expert_dp_group_size > 0:
+                    num_uploader = args.world_size // expert_dp_group_size
+            else:
+                num_uploader = args.world_size // torch.cuda.device_count()
+            self.azcopy_command += f" --cap-mbps {args.ckpt_upload_blob_ingress_mbps // num_uploader}"
 
         self.ckpt_iter_prefix = "iter_"
         self.ckpt_tracker_file = "latest_checkpointed_iteration.txt"
         self.log_progress_file = "progress.txt" if args.log_progress else None
-        self.upload_metafiles = bool(args.rank == 0)
         self.local_dir = args.save
         self.blob_path = args.ckpt_upload_blob_path.rstrip("/")
         self.blob_sas_path = args.ckpt_upload_blob_sas_path
@@ -71,23 +76,24 @@ class CkptUploadQueue:
         print("Checkpoint blob SAS token: failed to load from env AZURE_SAS_TOKEN")
         return ""
 
-    def add_upload_task(self, upload_paths: List[str], on_success_delete: bool = True):
+    def add_upload_task(self, upload_paths: List[str], upload_tracker_file: bool = False, on_success_delete: bool = True):
         """
         Enqueue a list of directories and files to be uploaded.
         """
-        self.upload_tasks.put((upload_paths, on_success_delete))
-        print("Checkpoint upload enqueued task: {} -> {}, {} delete on success".format(
+        self.upload_tasks.put((upload_paths, upload_tracker_file, on_success_delete))
+        print("Checkpoint upload enqueued task: {} -> {}, {} upload tracker file, {} delete on success".format(
             ", ".join(upload_paths),
             self.blob_path,
+            "will" if upload_tracker_file else "will not",
             "will" if on_success_delete else "will not",
         ))
 
-    async def _run_task(self, upload_paths: List[str], on_success_delete: bool = True):
+    async def _run_task(self, upload_paths: List[str], upload_tracker_file: bool = False, on_success_delete: bool = True):
         """
         Run the checkpoint upload and deletion task asynchronously.
         """
         rc = await self._run_upload(upload_paths)
-        if rc and self.upload_metafiles:
+        if rc and upload_tracker_file:
             metafile_paths = []
             try:
                 uploaded_iter = max(
