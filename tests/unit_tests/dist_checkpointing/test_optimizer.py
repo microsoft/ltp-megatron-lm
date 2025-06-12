@@ -600,3 +600,40 @@ class TestOptimizerResharding:
                 diffs = diff(plain_state_dict_A, plain_state_dict_B)
                 assert not any(map(bool, diffs)), diffs
                 Utils.destroy_model_parallel()
+
+    @pytest.mark.parametrize('use_grouped_mlp', [False, True])
+    @pytest.mark.parametrize('use_glu', [False, True])
+    @pytest.mark.parametrize('tp_pp_exp', [
+        (1, 1, 1),  # trigger grouped mlp offset issue when use_grouped_mlp and use_glu
+        (1, 1, 2),
+        (1, 1, 8),
+        (1, 2, 2),
+        (2, 1, 2),
+    ])
+    def test_chained_optimizer_saving(
+        self,
+        tmp_path_dist_ckpt,
+        tp_pp_exp,
+        use_grouped_mlp,
+        use_glu,
+    ):
+        tp, pp, exp = tp_pp_exp
+        with TempNamedDir(
+            tmp_path_dist_ckpt / 'test_fp32_optimizer_dist_save', sync=False
+        ) as ckpt_dir:
+            Utils.initialize_model_parallel(tp, pp, expert_model_parallel_size=exp)
+            model, opt = setup_moe_model_and_optimizer(
+                seed=42,
+                tp=tp,
+                pp=pp,
+                ep=exp,
+                bf16=True,
+                dist_opt=True,
+                use_te=False,
+                use_grouped_mlp=use_grouped_mlp,
+                use_glu=use_glu,
+            )
+            save(opt.sharded_state_dict(model[0].sharded_state_dict()), ckpt_dir)
+            metadata_file = ckpt_dir / '.metadata'
+            assert metadata_file.is_file(), f"Checkpoint .metadata file not found: {metadata_file}"
+            Utils.destroy_model_parallel()
