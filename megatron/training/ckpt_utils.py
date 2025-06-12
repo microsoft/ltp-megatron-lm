@@ -61,7 +61,7 @@ class CkptUploadQueue:
         If `blob_sas_path` exists and contains a non-empty token, read it and return.
         Otherwise, try the AZURE_SAS_TOKEN environment variable.
         """
-        if os.path.isfile(self.blob_sas_path):
+        if self.blob_sas_path and os.path.isfile(self.blob_sas_path):
             with open(self.blob_sas_path, "r") as f:
                 token = f.read().strip()
                 if token:

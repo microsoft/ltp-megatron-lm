@@ -569,7 +569,8 @@ def save_checkpoint(iteration, model, optimizer, opt_param_scheduler, num_floati
             or ckpt_type != CheckpointType.LEGACY) \
             and args.local_rank == 0:
         def upload_finalize_fn():
-            if args.ckpt_upload_blob_path and args.ckpt_upload_blob_sas_path:
+            # Check blob path only, blob token can be either from a file or env var
+            if args.ckpt_upload_blob_path:
                 iter_dir = os.path.basename(get_checkpoint_name(save_dir, iteration, return_base_dir=True))
                 CkptUploadQueue().add_upload_task([iter_dir], upload_tracker_file=bool(args.rank == 0))
             elif not getattr(save_checkpoint, "_has_skip_upload_printed", False):
