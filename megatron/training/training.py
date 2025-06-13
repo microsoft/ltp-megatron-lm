@@ -2102,7 +2102,7 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
         grad_norm_per_layer = None
         if args.log_grad_norm_per_layer and (args.use_distributed_optimizer and not args.use_custom_fsdp):
             grad_norm_per_layer = optimizer.get_grad_norm_per_layer(
-                global_layer_offset, args.num_layers, args.log_grad_norm_per_layer_extra_patterns)
+                args.num_layers, global_layer_offset, args.log_grad_norm_per_layer_extra_patterns)
         report_memory_flag = training_log(loss_dict, total_loss_dict,
                                           learning_rate,
                                           decoupled_learning_rate,
