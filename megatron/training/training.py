@@ -59,6 +59,7 @@ from megatron.training.initialize import set_jit_fusion_options
 from megatron.training.utils import (
     get_batch_on_this_cp_rank,
     get_batch_on_this_tp_rank,
+    set_manual_pipeline_split_patch,
 )
 from megatron.legacy.data.data_samplers import build_pretraining_data_loader
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
@@ -679,6 +680,11 @@ def pretrain(
 
     if args.log_progress:
         append_to_progress_log("Starting job")
+
+    # Enable manually split layers in (interleaved) 1f1b pipeline parallelism by monkey patching
+    if args.decoder_pipeline_manual_split_list is not None:
+        print_rank_0('monkey patch to enable manual pipeline split...')
+        set_manual_pipeline_split_patch(args)
 
     # Initialize fault tolerance
     # NOTE: ft_integration functions other than `setup` are no-op if the FT is not initialized
