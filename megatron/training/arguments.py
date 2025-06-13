@@ -2590,7 +2590,7 @@ def _add_moe_args(parser):
     group.add_argument('--moe-per-layer-logging', action='store_true',
                        help='Enable per-layer logging for MoE, currently supports auxiliary loss and z loss.')
     group.add_argument('--moe-tokens-logging', action='store_true',
-                        help='Enable logging of the number of tokens. ')
+                       help='Enable logging of the number of tokens per expert in MoE layers.')
     # Token dispatcher arguments
     group.add_argument('--moe-token-dispatcher-type', type=str,
                        choices=['allgather', 'alltoall', 'flex', 'alltoall_seq'],
