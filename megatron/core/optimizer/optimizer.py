@@ -273,7 +273,7 @@ class MegatronOptimizer(ABC):
             if isinstance(global_layer_id, str):
                 for idx, pattern in enumerate(extra_patterns):
                     if pattern in global_layer_id:
-                        total_norm_per_layer[num_layers + idx] = total_norm
+                        total_norm_per_layer[num_layers + idx] += total_norm
                         break
             else:
                 total_norm_per_layer[global_layer_id] = total_norm

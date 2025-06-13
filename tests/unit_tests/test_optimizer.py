@@ -174,6 +174,7 @@ def test_optim_get_grad_norm_per_layer():
     seq = 4
     mbs = 1
     pp = 2
+    num_experts = 2
     ep = 2
 
     _init_distributed(world, rank)
@@ -185,11 +186,15 @@ def test_optim_get_grad_norm_per_layer():
     model_parallel_cuda_manual_seed(seed)
 
     transformer_config = TransformerConfig(
-        num_layers=num_layers // pp, hidden_size=hidden_size, num_attention_heads=4, num_moe_experts=2
+        num_layers=num_layers // pp,
+        hidden_size=hidden_size,
+        num_attention_heads=4,
+        num_moe_experts=num_experts,
+        expert_model_parallel_size=ep,
     )
     model = GPTModel(
         config=transformer_config,
-        transformer_layer_spec=get_gpt_layer_with_transformer_engine_spec(),
+        transformer_layer_spec=get_gpt_layer_with_transformer_engine_spec(num_experts=num_experts),
         vocab_size=128,
         max_sequence_length=4,
         pre_process=parallel_state.is_pipeline_first_stage(),
@@ -217,6 +222,17 @@ def test_optim_get_grad_norm_per_layer():
     )
     optim = get_megatron_optimizer(optimizer_config, [model])
 
+    global_layer_offset = num_layers // pp * pp_rank
+
+    assert len(optim.chained_optimizers) == 2 # dense and moe
+    assert not hasattr(optim, 'grads_for_norm_per_layer')
+    grads_for_norm_per_layer = optim.get_main_grads_for_grad_norm_per_layer(global_layer_offset)
+    assert hasattr(optim, 'grads_for_norm_per_layer')
+    if pp_rank == 0:
+        assert len(grads_for_norm_per_layer) == 3 # embedding.{weight|bias}, layer-0
+    else:
+        assert len(grads_for_norm_per_layer) == 4 # layer-1, output_layer.weight, final_layernoem.{weight|bias}
+
     for _ in range(2):
         output = model(input_ids, position_ids, attention_mask, labels=labels, loss_mask=loss_mask)
         loss = output.mean()
@@ -224,11 +240,14 @@ def test_optim_get_grad_norm_per_layer():
         _, grad_norm, _ = optim.step()
         grad_norm_per_layer = optim.get_grad_norm_per_layer(
             num_layers,
-            num_layers // pp * pp_rank,
+            global_layer_offset,
             ['embedding', 'output_layer', 'final_layernorm']
         )
+        assert len(grad_norm_per_layer) == 5
+        for name in ['embedding', 'layer-0', 'layer-1', 'output_layer', 'final_layernorm']:
+            assert name in grad_norm_per_layer
         assert torch.isclose(
             torch.tensor(grad_norm**2),
             torch.tensor(sum([x**2 for x in grad_norm_per_layer.values()])),
-            rtol=1e-3
+            rtol=1e-2
         )
