@@ -143,6 +143,9 @@ class CKPTContext:
                     "pipeline_model_parallel_size*target_virtual_pipeline_model_parallel_size, "
                     "num_layers={}, pipeline_model_parallel_size={}, target_virtual_pipeline_model_parallel_size={}".format(
                         self.num_layers, self.pp_size, self.vpp_size))
+                
+            num_layers_per_pp = self.num_layers // self.pp_size
+            self.num_middle_layers = self.num_layers - num_layers_per_pp * 2
 
             num_layers_per_vpp_stage = self.num_layers // (self.pp_size * self.vpp_size)
             self.first_vpp_layer_split = [num_layers_per_vpp_stage for _ in range(self.vpp_size)]
