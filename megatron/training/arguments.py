@@ -2085,6 +2085,13 @@ def _add_distributed_args(parser):
                        type=int, default=None,
                        help=('The number of transformer layers on the last pipeline stage of the decoder. '
                        'Default None is even split of transformer layers across all pipeline stages'))
+    group.add_argument('--decoder-pipeline-manual-split-list', nargs='+', type=int, default=None, help=
+                       ('The pipeline split list of the layers, relaxing the divisibility restriciton '
+                       'of the current interleaved-1f1b schedule. The layer split or number of each pp '
+                       'rank is split_list[pp_rank*vp_size:(pp_rank+1)*vp_size] or split_list[pp_rank] '
+                       'when interleaved pipeline is used or not. For example, the split list could be '
+                       '"7 8 9 8" in layer32-pp4 config, or "3 4 4 4 5 4 4 4" in layer32-pp4-vpp2 config, '
+                       'where the vpp split of pp_rank0/pp_rank1/pp_rank2/pp_rank3 is [3,4]/[4,4]/[5,4]/[4,4]'))
     group.add_argument('--model-parallel-size', type=int, default=None,
                        help='Old model parallel argument, do not use. Use '
                        '--tensor-model-parallel-size instead.')

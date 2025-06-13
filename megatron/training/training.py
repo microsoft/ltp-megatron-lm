@@ -680,6 +680,12 @@ def pretrain(
     if args.log_progress:
         append_to_progress_log("Starting job")
 
+    # Enable manually split layers in (interleaved) 1f1b pipeline parallelism by monkey patching
+    if args.decoder_pipeline_manual_split_list is not None:
+        from megatron.training.patch import set_manual_pipeline_split_patch
+        print_rank_0('monkey patch to enable manual pipeline split...')
+        set_manual_pipeline_split_patch(args)
+
     # Initialize fault tolerance
     # NOTE: ft_integration functions other than `setup` are no-op if the FT is not initialized
     if args.enable_ft_package:
