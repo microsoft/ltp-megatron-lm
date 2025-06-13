@@ -84,6 +84,9 @@ from megatron.core.num_microbatches_calculator import (
     get_num_microbatches,
     update_num_microbatches)
 
+from megatron.core.transformer.transformer_layer import get_transformer_layer_offset
+from megatron.training.arguments import core_transformer_config_from_args
+
 from .async_utils import maybe_finalize_async_save
 from .ckpt_utils import CkptUploadQueue
 from .utils import (
@@ -1981,6 +1984,10 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
         torch.distributed.barrier()
         print_rank_0(f">>> Weight hashes match after {iteration} iterations...")
 
+    # Prepare global layer offset for per-layer grad norm.
+    if args.log_grad_norm_per_layer and (args.use_distributed_optimizer and not args.use_custom_fsdp):
+        global_layer_offset = get_transformer_layer_offset(core_transformer_config_from_args(args))
+
     # Run training iterations till done.
     while iteration < args.train_iters:
         if args.profile and torch.distributed.get_rank() in args.profile_ranks:
@@ -2093,8 +2100,9 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
             else:
                 learning_rate = param_group['lr']
         grad_norm_per_layer = None
-        if args.log_grad_norm_per_layer:
-            grad_norm_per_layer = optimizer.get_grad_norm_per_layer()
+        if args.log_grad_norm_per_layer and (args.use_distributed_optimizer and not args.use_custom_fsdp):
+            grad_norm_per_layer = optimizer.get_grad_norm_per_layer(
+                global_layer_offset, args.num_layers, args.log_grad_norm_per_layer_extra_patterns)
         report_memory_flag = training_log(loss_dict, total_loss_dict,
                                           learning_rate,
                                           decoupled_learning_rate,

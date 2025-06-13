@@ -6,8 +6,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import SGD, Adam
 
+from megatron.core import parallel_state
 from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig
+from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core.optimizer import ChainedOptimizer, OptimizerConfig, get_megatron_optimizer
+from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer import TransformerConfig
 from tests.unit_tests.test_utilities import Utils
 from tests.unit_tests.test_utils import _deinit_distributed, _init_distributed
@@ -160,3 +164,71 @@ def test_optim_sharded_state_dict(use_distributed_optimizer: bool, precision: st
             'common_step' not in sharded_state_dict['optimizer']['state']
             or sharded_state_dict['optimizer']['state']['common_step'] is not None
         ), "Found 'optimizer.state.common_step=None' in sharded state dict."
+
+
+def test_optim_get_grad_norm_per_layer():
+    world = int(os.getenv('WORLD_SIZE', '1'))
+    rank = int(os.getenv('RANK', '0'))
+    num_layers = 2
+    hidden_size = 128
+    seq = 4
+    mbs = 1
+    pp = 2
+    ep = 2
+
+    _init_distributed(world, rank)
+    Utils.initialize_model_parallel(pipeline_model_parallel_size=pp, expert_model_parallel_size=ep)
+    pp_rank = parallel_state.get_pipeline_model_parallel_rank()
+
+    seed = 42
+    torch.manual_seed(seed)
+    model_parallel_cuda_manual_seed(seed)
+
+    transformer_config = TransformerConfig(
+        num_layers=num_layers // pp, hidden_size=hidden_size, num_attention_heads=4, num_moe_experts=2
+    )
+    model = GPTModel(
+        config=transformer_config,
+        transformer_layer_spec=get_gpt_layer_with_transformer_engine_spec(),
+        vocab_size=128,
+        max_sequence_length=4,
+        pre_process=parallel_state.is_pipeline_first_stage(),
+        post_process=parallel_state.is_pipeline_last_stage(),
+    ).cuda()
+
+    data = list(range(seq))
+    input_ids = torch.tensor(data, dtype=torch.int64).repeat((mbs, 1)).cuda()
+    position_ids = torch.tensor(data, dtype=torch.int64).repeat((mbs, 1)).cuda()
+    attention_mask = torch.ones((mbs, 1, seq, seq), dtype=bool).cuda()
+    labels = 1 + torch.tensor(data, dtype=torch.int64).repeat((mbs, 1)).cuda()
+    loss_mask = torch.ones(seq).repeat((mbs, 1)).cuda()
+    if parallel_state.is_pipeline_last_stage():
+        input_tensor = torch.randn((seq, mbs, hidden_size)).cuda()
+        model.set_input_tensor(input_tensor)
+
+    ddp_config = DistributedDataParallelConfig(use_distributed_optimizer=True)
+    model = DistributedDataParallel(transformer_config, ddp_config, model)
+    optimizer_config = OptimizerConfig(
+        optimizer='adam',
+        bf16=True,
+        use_distributed_optimizer=True,
+        lr=1e-3,
+        clip_grad=0.0
+    )
+    optim = get_megatron_optimizer(optimizer_config, [model])
+
+    for _ in range(2):
+        output = model(input_ids, position_ids, attention_mask, labels=labels, loss_mask=loss_mask)
+        loss = output.mean()
+        loss.backward()
+        _, grad_norm, _ = optim.step()
+        grad_norm_per_layer = optim.get_grad_norm_per_layer(
+            num_layers,
+            num_layers // pp * pp_rank,
+            ['embedding', 'output_layer', 'final_layernorm']
+        )
+        assert torch.isclose(
+            torch.tensor(grad_norm**2),
+            torch.tensor(sum([x**2 for x in grad_norm_per_layer.values()])),
+            rtol=1e-3
+        )
