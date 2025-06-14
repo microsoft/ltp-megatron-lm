@@ -7,11 +7,6 @@ from vpp_converter import convert_checkpoint
 
 logger = logging.getLogger(__name__)
 
-def _parse_list(s):
-    if s is None:
-        return None
-    return ast.literal_eval(s)
-
 def parse_arguments():
     parser = argparse.ArgumentParser(description="convert a non-virtual pipeline checkpoint to virtual pipeline checkpoint")
     parser.add_argument("--load-iteration-dir", type=str, required=True, help="iteration folder of source model checkpoint")
@@ -30,10 +25,10 @@ def parse_arguments():
     parser.add_argument("--num-max-processing-processes", type=int, default=8,
       help="the maximum number of processing processes used by this script, " \
       "increasing this value can speed up model conversion(but the final bottleneck may be disk bandwidth), it will also consume more CPU memory.")
-    parser.add_argument('--pipeline-ranks-to-process', type=_parse_list, default=None,
+    parser.add_argument('--pipeline-ranks-to-process', type=int, nargs="+", default=None,
       help="pipeline rank list to process using this script, to accelerate converting \
         user can launch multiple tasks on different nodes, each one process part of pipeline ranks. \
-        example : --pipeline-ranks-to-process [0,1,2,3] \
+        example : --pipeline-ranks-to-process 0 1 2 3 \
         default is None, means process all pipeline ranks")
 
     args = parser.parse_args()
@@ -77,6 +72,7 @@ iter_0000005
 """
 
 def main(args):
+    logger.info("args : {}".format(args))
     convert_checkpoint(args)
 
 if __name__ == "__main__":

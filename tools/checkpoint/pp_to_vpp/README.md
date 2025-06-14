@@ -77,7 +77,7 @@ options:
                         bandwidth), it will also consume more CPU memory.
   --pipeline-ranks-to-process PIPELINE_RANKS_TO_PROCESS
                         pipeline rank list to process using this script, to accelerate converting user can launch multiple tasks on different nodes, each one process part of pipeline
-                        ranks. example : --pipeline-ranks-to-process [0,1,2,3] default is None, means process all pipeline ranks
+                        ranks. example : --pipeline-ranks-to-process 0 1 2 3 default is None, means process all pipeline ranks
 ```
 
 ## examples
@@ -102,7 +102,7 @@ python main.py \
     --save-iteration-dir /path/to/dst_checkpoints/iter_0000050 \
     --target-virtual-pipeline-model-parallel-size 2 \
     --num-max-processing-processes 4 \
-    --pipeline-ranks-to-process [0,1,2,3]
+    --pipeline-ranks-to-process 0 1 2 3
 
 # node2:
 python main.py \
@@ -112,7 +112,7 @@ python main.py \
     --save-iteration-dir /path/to/dst_checkpoints/iter_0000050 \
     --target-virtual-pipeline-model-parallel-size 2 \
     --num-max-processing-processes 4 \
-    --pipeline-ranks-to-process [4,5,6,7]
+    --pipeline-ranks-to-process 4 5 6 7
 ```
 
 3) convert a model with uneven pipeline mode, which was saved by Megatron-LM with arguments
