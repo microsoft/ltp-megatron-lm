@@ -134,8 +134,7 @@ def convert_model_optim_rng(args, target_pp_rank, target_ep_rank):
     if target_pp_rank==0 and target_ep_rank<=1:
         logger.info("[pp_rank=0][ep_rank={}] keys of model state dict : {}\n".format(target_ep_rank, target_state_dict.keys()))
 
-    ckpt_ctx = CKPTContext()
-    ckpt_ctx.check_args_and_fill(args, target_state_dict)
+    ckpt_ctx = CKPTContext(args, target_state_dict)
 
     _convert_state_dict_args(args, target_pp_rank, target_ep_rank, target_state_dict, ckpt_ctx)
 

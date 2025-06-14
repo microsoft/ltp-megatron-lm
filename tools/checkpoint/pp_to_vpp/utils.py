@@ -71,7 +71,7 @@ def get_num_layers_for_this_vstage(pp_rank, vpp_rank, ckpt_ctx):
 
 
 class CKPTContext:
-    def check_args_and_fill(self, args, state_dict):
+    def __init__(self, args, state_dict):
         self.vpp_size = args.target_virtual_pipeline_model_parallel_size
         self.pp_size = args.pipeline_model_parallel_size
         self.ep_size = args.expert_model_parallel_size
@@ -132,10 +132,6 @@ class CKPTContext:
             elif self.num_middle_layers > 0:
                 log_and_exit("insufficient num_middle_pipeline_stages, "
                     "num_middle_layers={}, num_middle_pipeline_stages={}".format(self.num_middle_layers, num_middle_pipeline_stages))
-                
-            state_dict_args.decoder_first_pipeline_num_layers_split = args.target_first_virtual_pipeline_num_layers_split
-            state_dict_args.decoder_last_pipeline_num_layers_split = args.target_last_virtual_pipeline_num_layers_split
-
         else:
             self.uneven_mode = False
             if self.num_layers % (self.pp_size * self.vpp_size) != 0:
