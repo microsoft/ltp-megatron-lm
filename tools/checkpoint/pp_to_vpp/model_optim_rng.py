@@ -38,15 +38,15 @@ def _convert_state_dict_optimizer(args, target_pp_rank, target_ep_rank, state_di
         else state_optimizer
     try:
         current_step = -1
-        param_group_cadidates = []
+        param_group_candidates = []
         for opt_state in optimizer_states:
             for param_group in opt_state["optimizer"]["param_groups"]:
                 if "step" in param_group:
                     current_step = param_group["step"]
                 else:
-                    param_group_cadidates.append(param_group)
+                    param_group_candidates.append(param_group)
         if current_step != -1:
-            for param_group in param_group_cadidates:
+            for param_group in param_group_candidates:
                 param_group["step"] = current_step
                 logger.info(f"add step={current_step} in optimizer state")
     except Exception:
