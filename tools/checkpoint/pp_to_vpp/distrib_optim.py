@@ -150,7 +150,19 @@ def convert_distrib_optim(args, target_pp_rank, target_ep_rank, target_model_sta
         if target_pp_rank==0 and target_ep_rank<=1:
             logger.info("[pp_rank=0][ep_rank={}] keys of opt_parameters_dict[{}] : {}".format(
                 target_ep_rank, i, opt_parameters_dict.keys()))
-            
+        
+        def concat_parameter(new_parameters_dict,
+            param_master,
+            param_exp_avg,
+            param_exp_avg_sq,
+            slice_range):
+            new_parameters_dict["param"] = torch.cat((new_parameters_dict["param"],
+                param_master[slice_range]))
+            new_parameters_dict["exp_avg"] = torch.cat((new_parameters_dict["exp_avg"],
+                param_exp_avg[slice_range]))
+            new_parameters_dict["exp_avg_sq"] = torch.cat((new_parameters_dict["exp_avg_sq"],
+                param_exp_avg_sq[slice_range]))
+
         vdisopts = []
         for vidx in range(ckpt_ctx.vpp_size):
             """
@@ -189,12 +201,12 @@ def convert_distrib_optim(args, target_pp_rank, target_ep_rank, target_model_sta
                 logger.debug(f"[pp_rank={target_pp_rank}][ep_rank={target_ep_rank}] apply output_layer, "
                     f"num_elements_tail={num_elements_tail}")
                 assert num_elements_tail != 0, f"[pp_rank={target_pp_rank}][ep_rank={target_ep_rank}] num_elements_tail is 0"
-                new_parameters_dict["param"] = torch.cat((new_parameters_dict["param"],
-                    opt_parameters_dict["param"][:num_elements_tail]))
-                new_parameters_dict["exp_avg"] = torch.cat((new_parameters_dict["exp_avg"],
-                    opt_parameters_dict["exp_avg"][:num_elements_tail]))
-                new_parameters_dict["exp_avg_sq"] = torch.cat((new_parameters_dict["exp_avg_sq"],
-                    opt_parameters_dict["exp_avg_sq"][:num_elements_tail]))
+                
+                concat_parameter(new_parameters_dict,
+                    opt_parameters_dict["param"],
+                    opt_parameters_dict["exp_avg"],
+                    opt_parameters_dict["exp_avg_sq"],
+                    slice(None, num_elements_tail))
                 num_elements_in_vmodel += num_elements_tail
 
             # middle layer
@@ -211,9 +223,12 @@ def convert_distrib_optim(args, target_pp_rank, target_ep_rank, target_model_sta
                 num_layers_for_this_virtual_stage,
                 i==0,
                 i>0 or len(target_disopt_state_dicts)==1)
-            new_parameters_dict["param"] = torch.cat((new_parameters_dict["param"], param_part))
-            new_parameters_dict["exp_avg"] = torch.cat((new_parameters_dict["exp_avg"], exp_avg_part))
-            new_parameters_dict["exp_avg_sq"] = torch.cat((new_parameters_dict["exp_avg_sq"], exp_avg_sq_part))
+            
+            concat_parameter(new_parameters_dict,
+                param_part,
+                exp_avg_part,
+                exp_avg_sq_part,
+                slice(None, None))
             num_elements_in_vmodel += param_part.nelement()
 
             # embedding layer
@@ -228,13 +243,12 @@ def convert_distrib_optim(args, target_pp_rank, target_ep_rank, target_model_sta
                 logger.debug(f"[pp_rank={target_pp_rank}][ep_rank={target_ep_rank}] apply embedding, "
                     f"num_elements_head={num_elements_head}")
                 assert num_elements_head != 0, f"[pp_rank={target_pp_rank}][ep_rank={target_ep_rank}] num_elements_head is 0"
-
-                new_parameters_dict["param"] = torch.cat((new_parameters_dict["param"],
-                    opt_parameters_dict["param"][-num_elements_head:]))
-                new_parameters_dict["exp_avg"] = torch.cat((new_parameters_dict["exp_avg"],
-                    opt_parameters_dict["exp_avg"][-num_elements_head:]))
-                new_parameters_dict["exp_avg_sq"] = torch.cat((new_parameters_dict["exp_avg_sq"],
-                    opt_parameters_dict["exp_avg_sq"][-num_elements_head:]))
+                
+                concat_parameter(new_parameters_dict,
+                    opt_parameters_dict["param"],
+                    opt_parameters_dict["exp_avg"],
+                    opt_parameters_dict["exp_avg_sq"],
+                    slice(-num_elements_head, None))
                 num_elements_in_vmodel += num_elements_head
 
             new_parameters_dict["numel_unpadded"] = num_elements_in_vmodel
