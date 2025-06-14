@@ -3,7 +3,7 @@ import ast
 import sys
 import logging
 import argparse
-from vpp_converter import convert_checkpoint
+from parallel_convert import convert_checkpoint
 
 logger = logging.getLogger(__name__)
 
