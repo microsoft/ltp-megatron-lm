@@ -8,7 +8,7 @@ from utils import (
     get_vpp_source_position,
     MODEL_OPTIM_RNG_FILENAME,
     DISTRIB_OPTIM_FILENAME,
-    get_num_layers_for_this_vstage,
+    get_num_layers_for_this_vpp_stage,
 )
 
 import torch
@@ -214,7 +214,7 @@ def convert_distrib_optim(args, target_pp_rank, target_ep_rank, target_model_sta
                 target_pp_rank,
                 vidx,
                 ckpt_ctx)
-            num_layers_for_this_virtual_stage = get_num_layers_for_this_vstage(target_pp_rank, vidx, ckpt_ctx)
+            num_layers_for_this_virtual_stage = get_num_layers_for_this_vpp_stage(target_pp_rank, vidx, ckpt_ctx)
             param_part, exp_avg_part, exp_avg_sq_part = _fetch_opt_parameters(
                 args,
                 src_pp_rank,

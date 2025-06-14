@@ -58,7 +58,7 @@ def get_vpp_source_position(
     log_and_exit("double check failed, should never reach here")
     #
 
-def get_num_layers_for_this_vstage(pp_rank, vpp_rank, ckpt_ctx):
+def get_num_layers_for_this_vpp_stage(pp_rank, vpp_rank, ckpt_ctx):
     if not ckpt_ctx.uneven_mode:
         return ckpt_ctx.num_layers // (ckpt_ctx.pp_size * ckpt_ctx.vpp_size)
     if pp_rank == 0:

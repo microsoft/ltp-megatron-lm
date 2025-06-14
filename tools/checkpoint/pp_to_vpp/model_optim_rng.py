@@ -9,7 +9,7 @@ from utils import (
     get_vpp_source_position,
     MODEL_OPTIM_RNG_FILENAME,
     TargetCkptContext,
-    get_num_layers_for_this_vstage,
+    get_num_layers_for_this_vpp_stage,
 )
 
 import torch
@@ -105,7 +105,7 @@ def _convert_state_dict_model(args, target_pp_rank, target_ep_rank, state_dict, 
             vidx,
             ckpt_ctx)
         
-        num_layers_for_this_virtual_stage = get_num_layers_for_this_vstage(target_pp_rank, vidx, ckpt_ctx)
+        num_layers_for_this_virtual_stage = get_num_layers_for_this_vpp_stage(target_pp_rank, vidx, ckpt_ctx)
         src_model_state_dict = _fetch_model_state_dict(
             args,
             src_pp_rank,
