@@ -282,6 +282,7 @@ def test_different_initialize_order_unconsistency(src_tp_pp, ep_size):
         )
     except AssertionError as e:
         assert ep_size == 2
+        # Limitation in megatron/core/parallel_state.py::initialize_model_parallel
         assert str(e) == "When not using pp-last rank ordering, the data parallel size of the attention and moe layers must be the same"
         return
 
