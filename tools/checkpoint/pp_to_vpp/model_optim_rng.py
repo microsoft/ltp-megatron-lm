@@ -8,7 +8,7 @@ from utils import (
     get_folder_name,
     get_vpp_source_position,
     MODEL_OPTIM_RNG_FILENAME,
-    CKPTContext,
+    TargetCkptContext,
     get_num_layers_for_this_vstage,
 )
 
@@ -134,7 +134,7 @@ def convert_model_optim_rng(args, target_pp_rank, target_ep_rank):
     if target_pp_rank==0 and target_ep_rank<=1:
         logger.info("[pp_rank=0][ep_rank={}] keys of model state dict : {}\n".format(target_ep_rank, target_state_dict.keys()))
 
-    ckpt_ctx = CKPTContext(args, target_state_dict)
+    ckpt_ctx = TargetCkptContext(args, target_state_dict)
 
     _convert_state_dict_args(args, target_pp_rank, target_ep_rank, target_state_dict, ckpt_ctx)
 

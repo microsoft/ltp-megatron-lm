@@ -70,7 +70,7 @@ def get_num_layers_for_this_vstage(pp_rank, vpp_rank, ckpt_ctx):
     return ckpt_ctx.num_middle_layers // (num_middle_stages * ckpt_ctx.vpp_size)
 
 
-class CKPTContext:
+class TargetCkptContext:
     def __init__(self, args, state_dict):
         self.vpp_size = args.target_virtual_pipeline_model_parallel_size
         self.pp_size = args.pipeline_model_parallel_size
