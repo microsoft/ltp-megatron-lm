@@ -14,8 +14,6 @@ def _check_output_folder(args):
     if os.path.exists(output_folder):
         if not os.path.isdir(output_folder):
             log_and_exit(f"output path {output_folder} exists but is not a directory")
-        # if len(os.listdir(output_folder)) > 0:
-        #    log_and_exit(f"output path {output_folder} exists but not empty")
     else:
         os.makedirs(output_folder)
 

@@ -60,7 +60,7 @@ def _fetch_model_state_dict(args, src_pp_rank, src_ep_rank, src_start_layer_idx,
     src_folder_path = os.path.join(args.load_iteration_dir, get_folder_name(args, src_pp_rank, src_ep_rank))
     src_file_path = os.path.join(src_folder_path, MODEL_OPTIM_RNG_FILENAME)
 
-    #logger.debug(f"loading {src_file_path} to fetch source tensors in virtual stage...")
+    logger.debug(f"loading {src_file_path} to fetch source tensors in virtual stage...")
     with RetainLogLevel():
         state_dict = torch.load(src_file_path, map_location="cpu", weights_only=False)
     state_dict_model = state_dict["model"]

@@ -19,7 +19,6 @@ class RetainLogLevel:
 def log_and_exit(message):
     logger.fatal(message)
     raise Exception("exit with fatal error")
-    #sys.exit(1)
 
 def get_folder_name(args, target_pp_rank, target_ep_rank):
     folder_name = "mp_rank_00"
@@ -55,7 +54,8 @@ def get_vpp_source_position(
                 f"source_pp_rank={pp_stage}, source_start_layer_idx={source_start_layer_idx}")
             return (pp_stage, source_start_layer_idx)
         prefix_sum += layers_in_current_stage
-    log_and_exit("should never reach here")
+
+    log_and_exit("double check failed, should never reach here")
     #
 
 def get_num_layers_for_this_vstage(pp_rank, vpp_rank, ckpt_ctx):
