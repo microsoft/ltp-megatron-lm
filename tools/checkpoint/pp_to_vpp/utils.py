@@ -34,11 +34,15 @@ def get_vpp_source_position(
     ckpt_ctx):
 
     num_middle_stages = ckpt_ctx.pp_size - 2 # should be non-negative
-    num_layers_per_middle_virtual_stage = (ckpt_ctx.num_middle_layers // (num_middle_stages * ckpt_ctx.vpp_size)) if num_middle_stages > 0 else 0
+    num_layers_per_middle_virtual_stage = (ckpt_ctx.num_middle_layers // (num_middle_stages * ckpt_ctx.vpp_size)) \
+        if num_middle_stages > 0 else 0
 
     target_global_layer_idx = target_virtual_idx * num_middle_stages * num_layers_per_middle_virtual_stage + \
-        sum(ckpt_ctx.first_vpp_layer_split[:target_virtual_idx]) + sum(ckpt_ctx.last_vpp_layer_split[:target_virtual_idx]) \
-        + (0 if target_pp_rank == 0 else ckpt_ctx.first_vpp_layer_split[target_virtual_idx] + (target_pp_rank-1) * num_layers_per_middle_virtual_stage)
+        sum(ckpt_ctx.first_vpp_layer_split[:target_virtual_idx]) + sum(ckpt_ctx.last_vpp_layer_split[:target_virtual_idx])
+    
+    if target_pp_rank != 0:
+        target_global_layer_idx += (target_pp_rank - 1) * num_layers_per_middle_virtual_stage + \
+            ckpt_ctx.first_vpp_layer_split[target_virtual_idx]
 
     prefix_sum = 0
     for pp_stage in range(ckpt_ctx.pp_size):
