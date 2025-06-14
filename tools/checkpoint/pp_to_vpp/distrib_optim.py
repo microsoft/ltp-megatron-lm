@@ -237,8 +237,11 @@ def convert_distrib_optim(args, target_pp_rank, target_ep_rank, target_model_sta
 
             new_parameters_dict["numel_unpadded"] = num_elements_in_vmodel
 
-            for v in new_parameters_dict.values():
-                v = v.clone().detach() if torch.is_tensor(v) else v
+            for k, v in new_parameters_dict.items():
+                if torch.is_tensor(v):
+                    # .clone.detach() is needed for removing unneeded data
+                    #   and decrease checkpoint file size
+                    new_parameters_dict[k] = v.clone().detach()
 
             if num_elements_in_vmodel != 0:
                 vdisopts.append({type_key : new_parameters_dict})
