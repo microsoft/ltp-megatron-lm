@@ -16,7 +16,7 @@ import torch
 
 logger = logging.getLogger(__name__)
 
-def _convert_state_dict_args(args, target_pp_rank, target_ep_rank, state_dict, ckpt_ctx):
+def _convert_state_dict_args(state_dict, ckpt_ctx):
     state_dict_args = state_dict["args"]
     if ckpt_ctx.uneven_mode:
         state_dict_args.decoder_first_pipeline_num_layers_split = ckpt_ctx.first_vpp_layer_split
@@ -31,7 +31,7 @@ def _convert_state_dict_args(args, target_pp_rank, target_ep_rank, state_dict, c
     if hasattr(state_dict_args, "rank"):
         delattr(state_dict_args, "rank")
 
-def _convert_state_dict_optimizer(args, target_pp_rank, target_ep_rank, state_dict, ckpt_ctx):
+def _convert_state_dict_optimizer(state_dict):
     # optimizer state dict is equal
     state_optimizer = state_dict["optimizer"]
     optimizer_states = [state_optimizer] if not isinstance(state_optimizer, list) \
@@ -52,7 +52,7 @@ def _convert_state_dict_optimizer(args, target_pp_rank, target_ep_rank, state_di
     except Exception:
         logger.warning("add step to optimizer state failed")
 
-def _convert_state_dict_rng(args, target_pp_rank, target_ep_rank, state_dict, ckpt_ctx):
+def _convert_state_dict_rng():
     # rng state is equal
     pass
 
@@ -136,11 +136,11 @@ def convert_model_optim_rng(args, target_pp_rank, target_ep_rank):
 
     ckpt_ctx = TargetCkptContext(args, target_state_dict)
 
-    _convert_state_dict_args(args, target_pp_rank, target_ep_rank, target_state_dict, ckpt_ctx)
+    _convert_state_dict_args(target_state_dict, ckpt_ctx)
 
-    _convert_state_dict_optimizer(args, target_pp_rank, target_ep_rank, target_state_dict, ckpt_ctx)
+    _convert_state_dict_optimizer(target_state_dict)
 
-    _convert_state_dict_rng(args, target_pp_rank, target_ep_rank, target_state_dict, ckpt_ctx)
+    _convert_state_dict_rng()
 
     _convert_state_dict_model(args, target_pp_rank, target_ep_rank, target_state_dict, ckpt_ctx)
 
