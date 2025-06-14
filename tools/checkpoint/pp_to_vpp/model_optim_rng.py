@@ -78,6 +78,8 @@ def _fetch_model_state_dict(args, src_pp_rank, src_ep_rank, src_start_layer_idx,
 
     num_layers_remain = num_layers_for_this_virtual_stage - len(layer_idx_added)
     if num_layers_remain > 0:
+        # The source tensor state_dict spans two pipeline stages
+        #   and this recursion is executed at most once.
         assert base_layer_idx == 0
         next_level_outputs = _fetch_model_state_dict(args,
             src_pp_rank+1,

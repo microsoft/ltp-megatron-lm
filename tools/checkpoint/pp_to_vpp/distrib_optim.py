@@ -90,6 +90,8 @@ def _fetch_opt_parameters(
 
     num_layers_remain = num_layers_for_this_virtual_stage - upper_bound_layer_idx + src_start_layer_idx
     if num_layers_remain > 0:
+        # The source parameters spans two pipeline stages
+        #   and this recursion is executed at most once.
         (next_level_param_part, next_level_exp_avg_part, next_level_exp_avg_sq_part) = _fetch_opt_parameters(
         args,
         src_pp_rank + 1,
