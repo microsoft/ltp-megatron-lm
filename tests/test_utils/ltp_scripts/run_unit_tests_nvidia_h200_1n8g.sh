@@ -39,7 +39,6 @@ clear_previous_runs() {
 # - dist_checkpointing
 # - models
 # - test_checkpointing
-# - test_parallel_state
 # - test_tokenizer.py \
 # - transformer
 # All test cases fail in:
@@ -55,7 +54,6 @@ torchrun \
   --ignore tests/unit_tests/inference/engines/test_dynamic_engine.py \
   --ignore tests/unit_tests/models \
   --ignore tests/unit_tests/test_checkpointing.py \
-  --ignore tests/unit_tests/test_parallel_state.py \
   --ignore tests/unit_tests/test_tokenizer.py \
   --ignore tests/unit_tests/transformer \
   tests/unit_tests
@@ -100,16 +98,6 @@ torchrun \
   --deselect "tests/unit_tests/test_checkpointing.py::test_save_checkpoint[torch]" \
   --deselect "tests/unit_tests/test_checkpointing.py::test_save_checkpoint[torch_dcp]" \
   tests/unit_tests/test_checkpointing.py
-
-clear_previous_runs
-torchrun \
-  ${TORCHRUN_ARGS[@]} \
-  -m pytest -vxs \
-  ${PYTEST_COV_ARGS[@]} \
-  --deselect "tests/unit_tests/test_parallel_state.py::test_different_initialize_order_unconsistency[src_tp_pp3-2]" \
-  --deselect "tests/unit_tests/test_parallel_state.py::test_different_initialize_order_unconsistency[src_tp_pp4-2]" \
-  --deselect "tests/unit_tests/test_parallel_state.py::test_different_initialize_order_unconsistency[src_tp_pp5-2]" \
-  tests/unit_tests/test_parallel_state.py
 
 clear_previous_runs
 disable_pattern="not test_gpt2_tiktok_tokenizer"

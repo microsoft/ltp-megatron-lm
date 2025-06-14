@@ -276,9 +276,15 @@ def test_different_initialize_order_unconsistency(src_tp_pp, ep_size):
 
     Utils.destroy_model_parallel()
 
-    Utils.initialize_model_parallel(
-        *src_tp_pp, expert_model_parallel_size=ep_size, order='tp-pp-ep-dp'
-    )
+    try:
+        Utils.initialize_model_parallel(
+            *src_tp_pp, expert_model_parallel_size=ep_size, order='tp-pp-ep-dp'
+        )
+    except AssertionError as e:
+        assert ep_size == 2
+        assert str(e) == "When not using pp-last rank ordering, the data parallel size of the attention and moe layers must be the same"
+        return
+
     assert tp_g == torch.distributed.get_process_group_ranks(ps.get_tensor_model_parallel_group())
     assert dp_g != torch.distributed.get_process_group_ranks(ps.get_data_parallel_group(False))
     assert pp_g != torch.distributed.get_process_group_ranks(ps.get_pipeline_model_parallel_group())
