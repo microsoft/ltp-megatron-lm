@@ -62,7 +62,8 @@ def _fetch_opt_parameters(
             continue
         layer_idx = int(k.split(".layers.")[1].split(".")[0])
 
-        assert layer_idx >= upper_bound_layer_idx, "layer_idx stored unordered in checkpoint"
+        assert layer_idx >= upper_bound_layer_idx, \
+            "double check failed,layer_idx stored unordered in checkpoint"
         upper_bound_layer_idx = layer_idx
 
         if layer_idx == src_start_layer_idx and start_offset == -1:
