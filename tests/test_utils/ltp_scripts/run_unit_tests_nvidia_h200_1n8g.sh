@@ -126,7 +126,4 @@ torchrun \
   -m pytest -vxs \
   ${PYTEST_COV_ARGS[@]} \
   --deselect "tests/unit_tests/transformer/test_retro_attention.py::TestRetroAttention::test_gpu_forward" \
-  --deselect "tests/unit_tests/transformer/test_attention.py::TestParallelAttention::test_gpu_forward" \
-  --deselect "tests/unit_tests/transformer/test_attention.py::TestParallelAttention::test_fused_rope_gpu_forward" \
-  --deselect "tests/unit_tests/transformer/test_attention.py::TestParallelAttention::test_checkpointed_gpu_forward" \
   tests/unit_tests/transformer
