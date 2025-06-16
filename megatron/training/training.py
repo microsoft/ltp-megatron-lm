@@ -84,6 +84,9 @@ from megatron.core.num_microbatches_calculator import (
     get_num_microbatches,
     update_num_microbatches)
 
+from megatron.core.transformer.transformer_layer import get_transformer_layer_offset
+from megatron.training.arguments import core_transformer_config_from_args
+
 from .async_utils import maybe_finalize_async_save
 from .ckpt_utils import CkptUploadQueue
 from .utils import (
@@ -1347,7 +1350,7 @@ def train_step(forward_step_func, data_iterator,
 
 def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_rate, iteration,
                  loss_scale, report_memory_flag, skipped_iter,
-                 grad_norm, params_norm, num_zeros_in_grad):
+                 grad_norm, params_norm, num_zeros_in_grad, grad_norm_per_layer=None):
     """Log training information such as losses, timing, ...."""
     args = get_args()
     timers = get_timers()
@@ -1476,6 +1479,15 @@ def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_r
             if wandb_writer:
                 wandb_writer.log({'grad-norm': grad_norm}, iteration)
                 wandb_writer.log({'grad-norm-with-scale': grad_norm * loss_scale}, iteration)
+        if grad_norm_per_layer is not None:
+            for key in grad_norm_per_layer:
+                grad_norm_value = grad_norm_per_layer[key]
+                writer.add_scalar(f'grad-norm-{key}', grad_norm_value, iteration)
+                writer.add_scalar(f'grad-norm-{key} vs samples', grad_norm_value,
+                                  args.consumed_train_samples)
+                if wandb_writer:
+                    wandb_writer.log({f'grad-norm-{key}': grad_norm_value}, iteration)
+                    wandb_writer.log({f'grad-norm-with-scale-{key}': grad_norm_value * loss_scale}, iteration)
         if num_zeros_in_grad is not None:
             writer.add_scalar('num-zeros', num_zeros_in_grad, iteration)
             writer.add_scalar('num-zeros vs samples', num_zeros_in_grad,
@@ -1978,6 +1990,10 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
         torch.distributed.barrier()
         print_rank_0(f">>> Weight hashes match after {iteration} iterations...")
 
+    # Prepare global layer offset for per-layer grad norm.
+    if args.log_grad_norm_per_layer:
+        global_layer_offset = get_transformer_layer_offset(core_transformer_config_from_args(args))
+
     # Run training iterations till done.
     while iteration < args.train_iters:
         if args.profile and torch.distributed.get_rank() in args.profile_ranks:
@@ -2089,12 +2105,17 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
                 decoupled_learning_rate = param_group['lr']
             else:
                 learning_rate = param_group['lr']
+        grad_norm_per_layer = None
+        if args.log_grad_norm_per_layer:
+            grad_norm_per_layer = optimizer.get_grad_norm_per_layer(
+                args.num_layers, global_layer_offset, args.log_grad_norm_per_layer_extra_patterns)
         report_memory_flag = training_log(loss_dict, total_loss_dict,
                                           learning_rate,
                                           decoupled_learning_rate,
                                           iteration, loss_scale,
                                           report_memory_flag, skipped_iter,
-                                          grad_norm, params_norm, num_zeros_in_grad)
+                                          grad_norm, params_norm, num_zeros_in_grad,
+                                          grad_norm_per_layer=grad_norm_per_layer)
 
         # Evaluation.
         if args.eval_interval and iteration % args.eval_interval == 0 and \
