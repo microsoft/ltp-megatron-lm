@@ -1985,7 +1985,7 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
         print_rank_0(f">>> Weight hashes match after {iteration} iterations...")
 
     # Prepare global layer offset for per-layer grad norm.
-    if args.log_grad_norm_per_layer and (args.use_distributed_optimizer and not args.use_custom_fsdp):
+    if args.log_grad_norm_per_layer:
         global_layer_offset = get_transformer_layer_offset(core_transformer_config_from_args(args))
 
     # Run training iterations till done.
@@ -2100,7 +2100,7 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
             else:
                 learning_rate = param_group['lr']
         grad_norm_per_layer = None
-        if args.log_grad_norm_per_layer and (args.use_distributed_optimizer and not args.use_custom_fsdp):
+        if args.log_grad_norm_per_layer:
             grad_norm_per_layer = optimizer.get_grad_norm_per_layer(
                 args.num_layers, global_layer_offset, args.log_grad_norm_per_layer_extra_patterns)
         report_memory_flag = training_log(loss_dict, total_loss_dict,

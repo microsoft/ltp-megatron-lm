@@ -969,7 +969,8 @@ def validate_args(args, defaults={}):
 
     # Logging.
     if args.log_grad_norm_per_layer and not (args.use_distributed_optimizer and not args.use_custom_fsdp):
-        print("Warning: --log-grad-norm-per-layer only supports DistributedDataParallel. Ignoring.")
+        print("Warning: --log-grad-norm-per-layer only supports DistributedDataParallel. Disabling.")
+        args.log_grad_norm_per_layer = False
 
     # Print arguments.
     _print_args("arguments", args)
