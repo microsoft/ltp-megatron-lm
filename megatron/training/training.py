@@ -1515,7 +1515,13 @@ def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_r
         track_names = []
         if args.moe_router_load_balancing_type in ["aux_loss", "seq_aux_loss", "global_batch_loss"]:
             track_names.append("load_balancing_loss")
-            if args.moe_router_load_balancing_type == "global_batch_loss":
+            if args.moe_router_load_balancing_type == "sinkhorn":
+                track_names.append("sinkhorn_tokens_per_expert")
+            elif args.moe_router_load_balancing_type == "aux_loss":
+                track_names.append("aux_tokens_per_expert")
+            elif args.moe_router_load_balancing_type == "seq_aux_loss":
+                track_names.append("seq_aux_tokens_per_expert")
+            elif args.moe_router_load_balancing_type == "global_batch_loss":
                 track_names.append("global_batch_tokens_per_expert")
         if args.moe_z_loss_coeff is not None:
             track_names.append("z_loss")

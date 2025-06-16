@@ -446,6 +446,9 @@ class TransformerConfig(ModelParallelConfig):
     moe_per_layer_logging: bool = False
     """Enable per-layer logging for MoE, currently supports auxiliary loss and z loss."""
 
+    moe_tokens_logging: bool = False
+    """Enable logging of the number of tokens per expert in MoE layers."""
+
     moe_expert_capacity_factor: Optional[float] = None
     """moe_expert_capacity_factor (float): The capacity factor for each expert, None means no token
     will be dropped. The default is None."""
