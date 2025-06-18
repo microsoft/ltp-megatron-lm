@@ -70,9 +70,7 @@ torchrun \
   tests/unit_tests/data
 
 clear_previous_runs
-disable_pattern="not test_dp_sharding and "
-disable_pattern+="not test_memory_usage and "
-disable_pattern+="not test_remove_sharded_tensors"
+disable_pattern="not test_dp_sharding"
 torchrun \
   ${TORCHRUN_ARGS[@]} \
   -m pytest -vxs \

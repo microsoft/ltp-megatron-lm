@@ -999,15 +999,15 @@ class TorchDistLoadShardedStrategy(LoadShardedStrategy):
         new_state_dict_metadata = {}
         new_planner_data = {}
         new_storage_data = {}
-        for k in original_metadata.state_dict_metadata.keys():
+        for k in getattr(original_metadata, "state_dict_metadata", {}).keys():
             if k.startswith(key_prefix):
                 continue
             new_state_dict_metadata[k] = original_metadata.state_dict_metadata[k]
-        for k in original_metadata.planner_data.keys():
+        for k in getattr(original_metadata, "planner_data", {}).keys():
             if k.startswith(key_prefix):
                 continue
             new_planner_data[k] = original_metadata.planner_data[k]
-        for k in original_metadata.storage_data.keys():
+        for k in getattr(original_metadata, "storage_data", {}).keys():
             if k.fqn.startswith(key_prefix):
                 continue
             new_storage_data[k] = original_metadata.storage_data[k]

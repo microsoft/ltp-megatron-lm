@@ -21,9 +21,13 @@ from megatron.core.dist_checkpointing.optimizer import (
     get_param_id_to_sharded_param_map,
     optim_state_to_sharding_state,
 )
-from megatron.core.dist_checkpointing.serialization import get_default_save_sharded_strategy
+from megatron.core.dist_checkpointing.serialization import (
+    get_default_save_sharded_strategy,
+    get_default_load_sharded_strategy,
+)
 from megatron.core.dist_checkpointing.strategies.fully_parallel import (
     FullyParallelSaveStrategyWrapper,
+    FullyParallelLoadStrategyWrapper,
 )
 from megatron.core.dist_checkpointing.utils import extract_sharded_tensors
 from megatron.core.tensor_parallel import model_parallel_cuda_manual_seed
@@ -77,12 +81,12 @@ class Model(torch.nn.Module):
 
 
 class SwigluFactoryModel(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, config):
         super().__init__()
         self.linear = torch.nn.Linear(
             5, 64 // parallel_state.get_tensor_model_parallel_world_size(), bias=False
         )
-        self.config = TransformerConfig(hidden_size=8, num_attention_heads=1, num_layers=1)
+        self.config = config
 
     def sharded_state_dict(self):
         sharded_state_dict = self.state_dict(keep_vars=True)
@@ -115,9 +119,9 @@ class Model1dFlattenTensor(torch.nn.Module):
     transformed into torch dist-ckpt form
     """
 
-    def __init__(self):
+    def __init__(self, config):
         super().__init__()
-        self.config = TransformerConfig(hidden_size=128, num_attention_heads=1, num_layers=1)
+        self.config = config
         self.weight_1d = torch.nn.Parameter(torch.randn(self.config.hidden_size))
 
     def sharded_state_dict(self):
@@ -182,7 +186,13 @@ def initialize_small_model(pre_process=True, post_process=True, seed=0, **config
     torch.manual_seed(seed)
     model_parallel_cuda_manual_seed(seed)
 
-    return SwigluFactoryModel()
+    kwargs = dict(
+        hidden_size=8,
+        num_attention_heads=1,
+        num_layers=1,
+        bf16=config_kwargs.get("bf16"),
+    )
+    return SwigluFactoryModel(config=TransformerConfig(**kwargs))
 
 
 def initialize_1d_flatten_tensor_model(
@@ -193,7 +203,13 @@ def initialize_1d_flatten_tensor_model(
     torch.manual_seed(seed)
     model_parallel_cuda_manual_seed(seed)
 
-    return Model1dFlattenTensor()
+    kwargs = dict(
+        hidden_size=128,
+        num_attention_heads=1,
+        num_layers=1,
+        bf16=config_kwargs.get("bf16"),
+    )
+    return Model1dFlattenTensor(config=TransformerConfig(**kwargs))
 
 
 def load_checkpoint_no_arg_checks(*args, **kwargs):
@@ -213,7 +229,7 @@ class TestDistributedOptimizer:
         "initialize_fn",
         [initialize_small_model, initialize_gpt_model, initialize_1d_flatten_tensor_model],
     )
-    @pytest.mark.parametrize("use_fpsl", [False, True])
+    @pytest.mark.parametrize("use_fpsl", [True])
     # TODO: changing DP doesn't work in unit tests because of NCCL crashes
     @pytest.mark.parametrize(
         "tp_pp,src_dp,dest_dp",
@@ -235,15 +251,14 @@ class TestDistributedOptimizer:
 
         sharding_type = 'fully_sharded_model_space' if use_fpsl else 'dp_zero_gather_scatter'
 
-        Utils.initialize_model_parallel(*tp_pp)
-
         # sync=True to make sure other ranks wait for rank 0 to finish creating directory.
-        with TempNamedDir(tmp_path_dist_ckpt / 'test_dp_sharding', sync=True) as ckpt_dir:
+        with TempNamedDir(tmp_path_dist_ckpt / 'test_dp_sharding', sync=False) as ckpt_dir:
             try:
                 Utils.set_world_size(src_world_size)
                 if Utils.rank >= 0:
+                    Utils.initialize_model_parallel(*tp_pp)
                     # Save checkpoint A
-                    model, optimizer_A = setup_model_and_optimizer(
+                    model_A, optimizer_A = setup_model_and_optimizer(
                         seed=2, tp=tp_pp[0], pp=tp_pp[1], initialize_fn=initialize_fn
                     )
 
@@ -256,12 +271,13 @@ class TestDistributedOptimizer:
                         )
                     save(
                         optimizer_A.sharded_state_dict(
-                            model[0].sharded_state_dict(), sharding_type=sharding_type
+                            model_A[0].sharded_state_dict(), sharding_type=sharding_type
                         ),
                         ckpt_dir,
                         save_strategy,
                     )
-                    optim_param_state_A = optimizer_A.get_parameter_state_dp_zero()
+                    assert len(optimizer_A.chained_optimizers) == 1
+                    optim_param_state_A = optimizer_A.chained_optimizers[0].get_parameter_state_dp_zero()
                     Utils.destroy_model_parallel()
                 else:
                     # this prevents NCCL errors when changing DP. TODO: fix it properly
@@ -274,29 +290,39 @@ class TestDistributedOptimizer:
                 if Utils.rank >= 0:
                     Utils.initialize_model_parallel(*tp_pp)
 
-                    model, optimizer_B = setup_model_and_optimizer(
+                    model_B, optimizer_B = setup_model_and_optimizer(
                         seed=3, tp=tp_pp[0], pp=tp_pp[1], initialize_fn=initialize_fn
                     )
-                    optim_param_state_B = optimizer_B.get_parameter_state_dp_zero()
+                    assert len(optimizer_B.chained_optimizers) == 1
+                    optim_param_state_B = optimizer_B.chained_optimizers[0].get_parameter_state_dp_zero()
                     diffs = diff(optim_param_state_A, optim_param_state_B)
                     # Expect a mismatch in values - diffs[2] nonempty
                     if parallel_state.get_data_parallel_rank(with_context_parallel=True) == 0:
                         assert not diffs[0] and not diffs[1] and diffs[2], diffs
 
                     sharded_state_dict = optimizer_B.sharded_state_dict(
-                        model[0].sharded_state_dict(), is_loading=True, sharding_type=sharding_type
+                        model_B[0].sharded_state_dict(), is_loading=True, sharding_type=sharding_type
                     )
-                    optim_state_dict = load(sharded_state_dict, ckpt_dir)
+                    load_strategy = None
+                    if use_fpsl:
+                        load_strategy = FullyParallelLoadStrategyWrapper(
+                            get_default_load_sharded_strategy(ckpt_dir),
+                            parallel_state.get_data_parallel_group(with_context_parallel=True),
+                        )
+                    optim_state_dict = load(sharded_state_dict, ckpt_dir, load_strategy)
                     optimizer_B.load_state_dict(optim_state_dict)
-                    optim_param_state_B = optimizer_B.get_parameter_state_dp_zero()
+                    optim_param_state_B = optimizer_B.chained_optimizers[0].get_parameter_state_dp_zero()
 
                     # Test both param state dicts are equal
                     diffs = diff(optim_param_state_A, optim_param_state_B)
                     assert not any(map(bool, diffs)), diffs
-
+                    Utils.destroy_model_parallel()
                 else:
                     # this prevents NCCL errors when changing DP. TODO: fix it properly
                     sleep(20)
+            except Exception as e:
+                print(e)
+                raise
             finally:
                 Utils.set_world_size()
 

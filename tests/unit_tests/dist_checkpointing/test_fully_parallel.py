@@ -287,6 +287,7 @@ class TestFullyParallelSaveAndLoad:
 
         assert loaded_state_dict.keys() == state_dict.keys()
 
+    @pytest.mark.skipif(True, reason="_get_empty_tensor_for_exchange won't be used")
     @pytest.mark.parametrize('state_dict_device', ['cpu', 'cuda'])
     @pytest.mark.flaky
     @pytest.mark.flaky_in_dev

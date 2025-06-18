@@ -207,6 +207,7 @@ def apply_swiglu_sharded_factory(original_sh_ten, sharded_offsets):
             # Global offsets are the same as in the non-flattened case
             assert t.ndim == 1, (key, t.shape)
             non_flat_local_shape = (original_shape[0] // 2, *original_shape[1:])
+            assert torch.numel(t) == int(np.prod(non_flat_local_shape)), (t.shape, non_flat_local_shape)
             chunk_numel = original_numel // 2
             result = []
             if flattened_range.start < chunk_numel:
