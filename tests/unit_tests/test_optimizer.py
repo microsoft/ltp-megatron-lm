@@ -166,10 +166,11 @@ def test_optim_sharded_state_dict(use_distributed_optimizer: bool, precision: st
         ), "Found 'optimizer.state.common_step=None' in sharded state dict."
 
 
-def test_optim_get_grad_norm_per_layer():
+@pytest.mark.parametrize("vpp", [1, 2])
+def test_optim_get_grad_norm_per_layer(vpp):
     world = int(os.getenv('WORLD_SIZE', '1'))
     rank = int(os.getenv('RANK', '0'))
-    num_layers = 2
+    num_layers = 4
     hidden_size = 128
     seq = 4
     mbs = 1
@@ -178,7 +179,11 @@ def test_optim_get_grad_norm_per_layer():
     ep = 2
 
     _init_distributed(world, rank)
-    Utils.initialize_model_parallel(pipeline_model_parallel_size=pp, expert_model_parallel_size=ep)
+    Utils.initialize_model_parallel(
+        pipeline_model_parallel_size=pp,
+        expert_model_parallel_size=ep,
+        virtual_pipeline_model_parallel_size=vpp,
+    )
     pp_rank = parallel_state.get_pipeline_model_parallel_rank()
 
     seed = 42
@@ -186,20 +191,25 @@ def test_optim_get_grad_norm_per_layer():
     model_parallel_cuda_manual_seed(seed)
 
     transformer_config = TransformerConfig(
-        num_layers=num_layers // pp,
+        num_layers=num_layers // pp // vpp,
         hidden_size=hidden_size,
         num_attention_heads=4,
         num_moe_experts=num_experts,
         expert_model_parallel_size=ep,
     )
-    model = GPTModel(
-        config=transformer_config,
-        transformer_layer_spec=get_gpt_layer_with_transformer_engine_spec(num_experts=num_experts),
-        vocab_size=128,
-        max_sequence_length=4,
-        pre_process=parallel_state.is_pipeline_first_stage(),
-        post_process=parallel_state.is_pipeline_last_stage(),
-    ).cuda()
+    models = []
+    for vpp_rank in range(vpp):
+        parallel_state.set_virtual_pipeline_model_parallel_rank(vpp_rank)
+        models.append(
+            GPTModel(
+                config=transformer_config,
+                transformer_layer_spec=get_gpt_layer_with_transformer_engine_spec(num_experts=num_experts),
+                vocab_size=128,
+                max_sequence_length=4,
+                pre_process=parallel_state.is_pipeline_first_stage(),
+                post_process=parallel_state.is_pipeline_last_stage(),
+            ).cuda()
+        )
 
     data = list(range(seq))
     input_ids = torch.tensor(data, dtype=torch.int64).repeat((mbs, 1)).cuda()
@@ -207,12 +217,19 @@ def test_optim_get_grad_norm_per_layer():
     attention_mask = torch.ones((mbs, 1, seq, seq), dtype=bool).cuda()
     labels = 1 + torch.tensor(data, dtype=torch.int64).repeat((mbs, 1)).cuda()
     loss_mask = torch.ones(seq).repeat((mbs, 1)).cuda()
-    if parallel_state.is_pipeline_last_stage():
-        input_tensor = torch.randn((seq, mbs, hidden_size)).cuda()
-        model.set_input_tensor(input_tensor)
+    input_tensors = []
+    for vpp_rank, model in enumerate(models):
+        parallel_state.set_virtual_pipeline_model_parallel_rank(vpp_rank)
+        if parallel_state.is_pipeline_first_stage():
+            continue
+        input_tensors.append(torch.randn((seq, mbs, hidden_size)).cuda())
+        model.set_input_tensor(input_tensors[-1])
 
     ddp_config = DistributedDataParallelConfig(use_distributed_optimizer=True)
-    model = DistributedDataParallel(transformer_config, ddp_config, model)
+    models = [
+        DistributedDataParallel(transformer_config, ddp_config, model)
+        for model in models
+    ]
     optimizer_config = OptimizerConfig(
         optimizer='adam',
         bf16=True,
@@ -220,31 +237,34 @@ def test_optim_get_grad_norm_per_layer():
         lr=1e-3,
         clip_grad=0.0
     )
-    optim = get_megatron_optimizer(optimizer_config, [model])
+    optim = get_megatron_optimizer(optimizer_config, models)
 
-    global_layer_offset = num_layers // pp * pp_rank
+    global_layer_offsets = [
+        vpp_rank * num_layers // vpp + pp_rank * num_layers // pp // vpp for vpp_rank in range(vpp)
+    ]
 
     assert len(optim.chained_optimizers) == 2 # dense and moe
     assert not hasattr(optim, 'grads_for_norm_per_layer')
-    grads_for_norm_per_layer = optim.get_main_grads_for_grad_norm_per_layer(global_layer_offset)
+    grads_for_norm_per_layer = optim.get_main_grads_for_grad_norm_per_layer(global_layer_offsets)
     assert hasattr(optim, 'grads_for_norm_per_layer')
     if pp_rank == 0:
-        assert len(grads_for_norm_per_layer) == 3 # embedding.{weight|bias}, layer-0
+        assert len(grads_for_norm_per_layer) == 4 # embedding.{weight|bias}, 2 layers
     else:
-        assert len(grads_for_norm_per_layer) == 4 # layer-1, output_layer.weight, final_layernoem.{weight|bias}
+        assert len(grads_for_norm_per_layer) == 5 # 2 layers, output_layer.weight, final_layernorm.{weight|bias}
 
     for _ in range(2):
-        output = model(input_ids, position_ids, attention_mask, labels=labels, loss_mask=loss_mask)
-        loss = output.mean()
-        loss.backward()
+        for model in models:
+            output = model(input_ids, position_ids, attention_mask, labels=labels, loss_mask=loss_mask)
+            loss = output.mean()
+            loss.backward()
         _, grad_norm, _ = optim.step()
         grad_norm_per_layer = optim.get_grad_norm_per_layer(
             num_layers,
-            global_layer_offset,
+            global_layer_offsets,
             ['embedding', 'output_layer', 'final_layernorm']
         )
-        assert len(grad_norm_per_layer) == 5
-        for name in ['embedding', 'layer-0', 'layer-1', 'output_layer', 'final_layernorm']:
+        assert len(grad_norm_per_layer) == 7
+        for name in ['embedding', 'layer-0', 'layer-1', 'layer-2', 'layer-3', 'output_layer', 'final_layernorm']:
             assert name in grad_norm_per_layer
         assert torch.isclose(
             torch.tensor(grad_norm**2),
