@@ -71,7 +71,6 @@ torchrun \
 
 clear_previous_runs
 disable_pattern="not test_dp_sharding and "
-disable_pattern+="not test_memory_usage and "
 disable_pattern+="not test_remove_sharded_tensors"
 torchrun \
   ${TORCHRUN_ARGS[@]} \

@@ -327,11 +327,11 @@ class TestFullyParallelSaveAndLoad:
         ), TempNamedDir(tmp_path_dist_ckpt / 'mock_dir') as ckpt_dir_A:
             _ = load_strategy.load(sharded_state_dict, ckpt_dir_A)
 
-        # Each rank is expected to do 7 * 10 empty allocations
-        assert len(mem_alloc) == 7 * 10
+        # Skip check for number of allocations since _get_empty_tensor_for_exchange may be skipped since 3fb5c51
+        # assert len(mem_alloc) == 7 * 10
         # Peak mem usage should be within 4MB (single tensor)
-        assert max(mem_alloc) - mem_alloc_start < 4.01 * megabytes, (
-            max(mem_alloc),
+        assert max(mem_alloc, default=0) - mem_alloc_start < 4.01 * megabytes, (
+            max(mem_alloc, default=0),
             mem_alloc_start,
         )
 
