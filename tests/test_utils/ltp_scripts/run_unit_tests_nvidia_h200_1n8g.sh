@@ -7,6 +7,7 @@ MAMBA_FORCE_BUILD=TRUE pip install git+https://github.com/state-spaces/mamba.git
 apt purge -y python3-blinker
 pip install flask flask-restful tiktoken tensorstore
 
+export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 export NCCL_DEBUG=WARN
 export NCCL_SOCKET_IFNAME=eth0
