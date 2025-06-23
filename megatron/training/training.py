@@ -1993,7 +1993,15 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
 
     # Prepare global layer offset for per-layer grad norm.
     if args.log_grad_norm_per_layer:
-        global_layer_offset = get_transformer_layer_offset(core_transformer_config_from_args(args))
+        if args.virtual_pipeline_model_parallel_size is None:
+            global_layer_offsets = [get_transformer_layer_offset(core_transformer_config_from_args(args))]
+        else:
+            global_layer_offsets = []
+            prev_vpp_rank = mpu.get_virtual_pipeline_model_parallel_rank()
+            for i in range(args.virtual_pipeline_model_parallel_size):
+                mpu.set_virtual_pipeline_model_parallel_rank(i)
+                global_layer_offsets.append(get_transformer_layer_offset(core_transformer_config_from_args(args)))
+            mpu.set_virtual_pipeline_model_parallel_rank(prev_vpp_rank)
 
     # Run training iterations till done.
     while iteration < args.train_iters:
@@ -2109,7 +2117,7 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
         grad_norm_per_layer = None
         if args.log_grad_norm_per_layer:
             grad_norm_per_layer = optimizer.get_grad_norm_per_layer(
-                args.num_layers, global_layer_offset, args.log_grad_norm_per_layer_extra_patterns)
+                args.num_layers, global_layer_offsets, args.log_grad_norm_per_layer_extra_patterns)
         report_memory_flag = training_log(loss_dict, total_loss_dict,
                                           learning_rate,
                                           decoupled_learning_rate,
