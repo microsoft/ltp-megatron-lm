@@ -114,10 +114,6 @@ class Router(ABC, MegatronModule):
         """Set the layer number for the router."""
         self.layer_number = layer_number
 
-        """ Set the top-k value for the router based on the layer number."""
-        if self.moe_router_topk_layer_wise is not None:
-            self.topk = self.moe_router_topk_layer_wise[self.layer_number - 1]
-
 
 class TopKRouter(Router):
     """Route each token to the top-k experts."""
@@ -529,6 +525,10 @@ class TopKRouter(Router):
             input (torch.Tensor): Input tensor.
         """
         self._maintain_float32_expert_bias()
+
+        """ Set the top-k value for the router based on the layer number."""
+        if self.moe_router_topk_layer_wise is not None:
+            self.topk = self.moe_router_topk_layer_wise[self.layer_number - 1]
 
         # Apply input jitter
         input = self.apply_input_jitter(input)
