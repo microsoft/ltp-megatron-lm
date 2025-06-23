@@ -351,6 +351,9 @@ class TransformerConfig(ModelParallelConfig):
     moe_router_topk: int = 2
     """Number of experts to route to for each token."""
 
+    moe_router_topk_layer_wise: List[int] = None
+    """Layer-wise number of experts to route to for each token."""
+
     moe_router_topk_limited_devices: Optional[int] = None
     """Number of EP ranks to consider for each token in group-limited routing,
     DEPRECATED and replaced by moe_router_num_groups and moe_router_group_topk.

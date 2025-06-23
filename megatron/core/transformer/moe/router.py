@@ -114,6 +114,10 @@ class Router(ABC, MegatronModule):
         """Set the layer number for the router."""
         self.layer_number = layer_number
 
+        """ Set the top-k value for the router based on the layer number."""
+        if self.moe_router_topk_layer_wise is not None:
+            self.topk = self.moe_router_topk_layer_wise[self.layer_number - 1]
+
 
 class TopKRouter(Router):
     """Route each token to the top-k experts."""
@@ -126,6 +130,7 @@ class TopKRouter(Router):
         """
         super().__init__(config=config)
         self.topk = self.config.moe_router_topk
+        self.moe_router_topk_layer_wise = self.config.moe_router_topk_layer_wise
         self.routing_type = self.config.moe_router_load_balancing_type
         self.score_function = self.config.moe_router_score_function
         self.moe_aux_loss_score_function = self.config.moe_aux_loss_score_function
