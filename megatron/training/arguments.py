@@ -835,10 +835,10 @@ def validate_args(args, defaults={}):
             '--mrope-section should be set when using --position-embedding-type mrope.'
 
     # MoE per-layer topk check
-    if args.moe_per_layer_topk is not None:
+    if args.moe_router_topk_layer_wise is not None:
         # moe-router-topk-layer-wise should be a list
-        assert isinstance(args.moe_per_layer_topk, list), \
-            "moe-router-topk-layer-wise should be a list of integers."
+        assert isinstance(args.moe_router_topk_layer_wise, list), \
+            "--moe-router-topk-layer-wise should be a list of integers."
 
     # MoE Spec check
     if args.num_experts == 0:
