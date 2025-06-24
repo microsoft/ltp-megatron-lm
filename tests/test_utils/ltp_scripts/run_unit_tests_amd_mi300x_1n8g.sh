@@ -37,7 +37,6 @@ clear_previous_runs() {
 # - data
 # - dist_checkpointing
 # - models
-# - test_checkpointing
 # - test_parallel_state
 # - transformer
 # All test cases fail in:
@@ -57,7 +56,6 @@ torchrun \
   --ignore tests/unit_tests/inference/engines/test_dynamic_engine.py \
   --ignore tests/unit_tests/models \
   --ignore tests/unit_tests/ssm/test_mamba_hybrid_layer_allocation.py \
-  --ignore tests/unit_tests/test_checkpointing.py \
   --ignore tests/unit_tests/test_parallel_state.py \
   --ignore tests/unit_tests/transformer \
   tests/unit_tests
@@ -112,16 +110,6 @@ torchrun \
   -m pytest -vxs \
   ${PYTEST_COV_ARGS[@]} \
   tests/unit_tests/ssm/test_mamba_hybrid_layer_allocation.py
-
-clear_previous_runs
-torchrun \
-  ${TORCHRUN_ARGS[@]} \
-  -m pytest -vxs \
-  ${PYTEST_COV_ARGS[@]} \
-  --deselect "tests/unit_tests/test_checkpointing.py::test_load_checkpoint[torch]" \
-  --deselect "tests/unit_tests/test_checkpointing.py::test_save_checkpoint[torch]" \
-  --deselect "tests/unit_tests/test_checkpointing.py::test_save_checkpoint[torch_dcp]" \
-  tests/unit_tests/test_checkpointing.py
 
 clear_previous_runs
 torchrun \
