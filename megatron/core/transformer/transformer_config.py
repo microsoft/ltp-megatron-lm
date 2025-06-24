@@ -351,7 +351,7 @@ class TransformerConfig(ModelParallelConfig):
     moe_router_topk: int = 2
     """Number of experts to route to for each token."""
 
-    moe_router_topk_layer_wise: List[int] = None
+    moe_router_topk_layer_wise: Optional[List[int]] = None
     """Layer-wise number of experts to route to for each token."""
 
     moe_router_topk_limited_devices: Optional[int] = None
