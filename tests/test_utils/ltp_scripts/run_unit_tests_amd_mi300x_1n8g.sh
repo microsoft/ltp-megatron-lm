@@ -42,9 +42,6 @@ clear_previous_runs() {
 # - transformer
 # All test cases fail in:
 # - inference/engines/test_dynamic_engine.py
-# Hangs in full test but passes in separate run:
-# - distributed/test_torch_fully_sharded_parallel.py
-# - ssm/test_mamba_hybrid_layer_allocation.py
 
 clear_previous_runs
 torchrun \
@@ -53,10 +50,8 @@ torchrun \
   ${PYTEST_COV_ARGS[@]} \
   --ignore tests/unit_tests/data \
   --ignore tests/unit_tests/dist_checkpointing \
-  --ignore tests/unit_tests/distributed/test_torch_fully_sharded_parallel.py \
   --ignore tests/unit_tests/inference/engines/test_dynamic_engine.py \
   --ignore tests/unit_tests/models \
-  --ignore tests/unit_tests/ssm/test_mamba_hybrid_layer_allocation.py \
   --ignore tests/unit_tests/test_checkpointing.py \
   --ignore tests/unit_tests/test_parallel_state.py \
   --ignore tests/unit_tests/transformer \
@@ -88,13 +83,6 @@ torchrun \
   ${TORCHRUN_ARGS[@]} \
   -m pytest -vxs \
   ${PYTEST_COV_ARGS[@]} \
-  tests/unit_tests/distributed/test_torch_fully_sharded_parallel.py
-
-clear_previous_runs
-torchrun \
-  ${TORCHRUN_ARGS[@]} \
-  -m pytest -vxs \
-  ${PYTEST_COV_ARGS[@]} \
   --deselect "tests/unit_tests/models/test_bert_model.py::TestBertModelAttentionDimensions::test_transformer_engine_version_1_7_to_1_10_rng_error" \
   --deselect "tests/unit_tests/models/test_clip_vit_model.py::TestCLIPViTModel::test_save_load" \
   --deselect "tests/unit_tests/models/test_llava_model.py::TestLLaVAModel::test_save_load" \
@@ -105,13 +93,6 @@ torchrun \
   --deselect "tests/unit_tests/models/test_t5_model.py::TestT5Model::test_forward_with_encoder_hidden_states" \
   --deselect "tests/unit_tests/models/test_t5_model.py::TestT5Model::test_post_process_forward" \
   tests/unit_tests/models
-
-clear_previous_runs
-torchrun \
-  ${TORCHRUN_ARGS[@]} \
-  -m pytest -vxs \
-  ${PYTEST_COV_ARGS[@]} \
-  tests/unit_tests/ssm/test_mamba_hybrid_layer_allocation.py
 
 clear_previous_runs
 torchrun \
