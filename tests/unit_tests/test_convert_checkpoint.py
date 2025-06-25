@@ -239,7 +239,9 @@ def is_state_dict_equal(x, y):
 def _test_convert_pp_to_vpp_internal(ckpt_dir : Path):
     rank = dist.get_rank()
     world_size = dist.get_world_size()
-    assert world_size == 8, "current only support world_size=8"
+    if world_size != 8:
+        print_rank_0("current test_convert_pp_to_vpp only support world_size=8")
+        return
     init_num_microbatches_calculator(rank, None, 1, 1, 1)
 
     args = create_args(
@@ -269,7 +271,8 @@ def _test_convert_pp_to_vpp_internal(ckpt_dir : Path):
     if rank == 0:
         # convert model, increase virtual_pipeline_size to 2
         command = (
-            "mkdir -p {}/iter_{:07d} ".format(args.load, iteration) +
+            "PYTHONPATH={} ".format(os.path.join(CURDIR, "../..")) +
+            "&& mkdir -p {}/iter_{:07d} ".format(args.load, iteration) +
             "&& echo {} > {}/latest_checkpointed_iteration.txt ".format(iteration, args.load) +
             "&& python {}/../../tools/checkpoint/pp_to_vpp/main.py ".format(CURDIR) +
                 "--load-iteration-dir {}/iter_{:07d} ".format(args.save, iteration) +
@@ -283,9 +286,8 @@ def _test_convert_pp_to_vpp_internal(ckpt_dir : Path):
         subprocess_result = subprocess.run(
             command,
             shell = True,
-            stdout = subprocess.PIPE,
-            stderr = subprocess.PIPE,
             text = True)
+        print_rank_0(f"convert finished, exit code : {subprocess_result.returncode}")
         assert subprocess_result.returncode == 0
 
     dist.barrier()
@@ -294,7 +296,7 @@ def _test_convert_pp_to_vpp_internal(ckpt_dir : Path):
     args.num_virtual_stages_per_pipeline_rank = 2
     args.perform_initialization = False
     reset_parallel_state(args)
-    
+
     new_model, new_optimizer, new_opt_scheduler = get_checkpoint_content(args)
     
     print_rank_0("loading checkpoint with virtual_pipeline_size=2")

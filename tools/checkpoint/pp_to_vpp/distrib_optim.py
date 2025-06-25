@@ -47,7 +47,7 @@ def _fetch_opt_parameters(
     start_offset, end_offset = -1, -1
     upper_bound_layer_idx = -1 # variable for double-check
     for (k, v) in state_dict_model.items():
-        if not hasattr(v, "nelement"):
+        if not hasattr(v, "nelement") or k.endswith("._extra_state"):
             continue
         if "router.expert_bias" in k:
             # in Megatron-LM
@@ -194,7 +194,7 @@ def convert_distrib_optim(args, target_pp_rank, target_ep_rank, target_model_sta
                 num_elements_tail = 0
                 for (k, v) in reversed(vmodel_dict.items()):
                     if "final_layernorm." in k or "output_layer." in k:
-                        if hasattr(v, "nelement"):
+                        if hasattr(v, "nelement") and not k.endswith("._extra_state"):
                             num_elements_tail += v.nelement()
                     else:
                         break
@@ -236,7 +236,7 @@ def convert_distrib_optim(args, target_pp_rank, target_ep_rank, target_model_sta
                 num_elements_head = 0
                 for (k, v) in vmodel_dict.items():
                     if k.startswith("embedding."):
-                        if hasattr(v, "nelement"):
+                        if hasattr(v, "nelement") and not k.endswith("._extra_state"):
                             num_elements_head += v.nelement()
                     else:
                         break
