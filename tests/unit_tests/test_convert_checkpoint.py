@@ -271,7 +271,7 @@ def _test_convert_pp_to_vpp_internal(ckpt_dir : Path):
     if rank == 0:
         # convert model, increase virtual_pipeline_size to 2
         command = (
-            "PYTHONPATH={} ".format(os.path.join(CURDIR, "../..")) +
+            "export PYTHONPATH={} ".format(os.path.join(CURDIR, "../..")) +
             "&& mkdir -p {}/iter_{:07d} ".format(args.load, iteration) +
             "&& echo {} > {}/latest_checkpointed_iteration.txt ".format(iteration, args.load) +
             "&& python {}/../../tools/checkpoint/pp_to_vpp/main.py ".format(CURDIR) +
