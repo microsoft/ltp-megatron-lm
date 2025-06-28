@@ -7,6 +7,7 @@ MAMBA_FORCE_BUILD=TRUE pip install git+https://github.com/state-spaces/mamba.git
 apt purge -y python3-blinker
 pip install flask flask-restful tiktoken tensorstore
 
+export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 export NCCL_DEBUG=WARN
 export NCCL_SOCKET_IFNAME=eth0
@@ -38,7 +39,6 @@ clear_previous_runs() {
 # - data
 # - dist_checkpointing
 # - models
-# - test_checkpointing
 # - test_parallel_state
 # - test_tokenizer.py \
 # - transformer
@@ -54,7 +54,6 @@ torchrun \
   --ignore tests/unit_tests/dist_checkpointing \
   --ignore tests/unit_tests/inference/engines/test_dynamic_engine.py \
   --ignore tests/unit_tests/models \
-  --ignore tests/unit_tests/test_checkpointing.py \
   --ignore tests/unit_tests/test_parallel_state.py \
   --ignore tests/unit_tests/test_tokenizer.py \
   --ignore tests/unit_tests/transformer \
@@ -90,16 +89,6 @@ torchrun \
   --deselect "tests/unit_tests/models/test_t5_model.py::TestT5Model::test_forward_with_encoder_hidden_states" \
   --deselect "tests/unit_tests/models/test_t5_model.py::TestT5Model::test_post_process_forward" \
   tests/unit_tests/models
-
-clear_previous_runs
-torchrun \
-  ${TORCHRUN_ARGS[@]} \
-  -m pytest -vxs \
-  ${PYTEST_COV_ARGS[@]} \
-  --deselect "tests/unit_tests/test_checkpointing.py::test_load_checkpoint[torch]" \
-  --deselect "tests/unit_tests/test_checkpointing.py::test_save_checkpoint[torch]" \
-  --deselect "tests/unit_tests/test_checkpointing.py::test_save_checkpoint[torch_dcp]" \
-  tests/unit_tests/test_checkpointing.py
 
 clear_previous_runs
 torchrun \

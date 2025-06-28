@@ -3,6 +3,7 @@ set -e
 pip install -r requirements_ci.txt
 pip install mock
 
+export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 export HIP_FORCE_DEV_KERNARG=1
 export HSA_ENABLE_SDMA=1
@@ -37,7 +38,6 @@ clear_previous_runs() {
 # - data
 # - dist_checkpointing
 # - models
-# - test_checkpointing
 # - test_parallel_state
 # - transformer
 # All test cases fail in:
@@ -52,7 +52,6 @@ torchrun \
   --ignore tests/unit_tests/dist_checkpointing \
   --ignore tests/unit_tests/inference/engines/test_dynamic_engine.py \
   --ignore tests/unit_tests/models \
-  --ignore tests/unit_tests/test_checkpointing.py \
   --ignore tests/unit_tests/test_parallel_state.py \
   --ignore tests/unit_tests/transformer \
   tests/unit_tests
@@ -69,8 +68,7 @@ torchrun \
 clear_previous_runs
 disable_pattern="not test_dp_sharding and "
 disable_pattern+="not test_memory_usage and "
-disable_pattern+="not test_remove_sharded_tensors and "
-disable_pattern+="not test_te_grouped_linear_torch_native"
+disable_pattern+="not test_remove_sharded_tensors"
 torchrun \
   ${TORCHRUN_ARGS[@]} \
   -m pytest -vxs \
@@ -84,25 +82,10 @@ torchrun \
   -m pytest -vxs \
   ${PYTEST_COV_ARGS[@]} \
   --deselect "tests/unit_tests/models/test_bert_model.py::TestBertModelAttentionDimensions::test_transformer_engine_version_1_7_to_1_10_rng_error" \
-  --deselect "tests/unit_tests/models/test_clip_vit_model.py::TestCLIPViTModel::test_save_load" \
-  --deselect "tests/unit_tests/models/test_llava_model.py::TestLLaVAModel::test_save_load" \
-  --deselect "tests/unit_tests/models/test_mamba_model.py::TestMambaModel::test_save_load" \
-  --deselect "tests/unit_tests/models/test_multimodal_projector.py::TestMultimodalProjector::test_save_load" \
-  --deselect "tests/unit_tests/models/test_radio_model.py::TestRADIOViTModel::test_save_load" \
   --deselect "tests/unit_tests/models/test_t5_model.py::TestT5Model::test_forward_output_encoder_hidden_only" \
   --deselect "tests/unit_tests/models/test_t5_model.py::TestT5Model::test_forward_with_encoder_hidden_states" \
   --deselect "tests/unit_tests/models/test_t5_model.py::TestT5Model::test_post_process_forward" \
   tests/unit_tests/models
-
-clear_previous_runs
-torchrun \
-  ${TORCHRUN_ARGS[@]} \
-  -m pytest -vxs \
-  ${PYTEST_COV_ARGS[@]} \
-  --deselect "tests/unit_tests/test_checkpointing.py::test_load_checkpoint[torch]" \
-  --deselect "tests/unit_tests/test_checkpointing.py::test_save_checkpoint[torch]" \
-  --deselect "tests/unit_tests/test_checkpointing.py::test_save_checkpoint[torch_dcp]" \
-  tests/unit_tests/test_checkpointing.py
 
 clear_previous_runs
 torchrun \
