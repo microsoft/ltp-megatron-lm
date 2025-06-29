@@ -188,6 +188,17 @@ class TopKRouter(Router):
             _, indices = torch.topk(logits, k=self.topk, dim=1)
         map = torch.zeros_like(logits).int().scatter(1, indices, 1).bool()
         scores = logits * map
+
+        if self.training and self.config.moe_tokens_logging:
+            tokens_per_expert = map.sum(dim=0)
+
+            save_to_tokens_per_expert_tracker(
+                "sinkhorn_tokens_per_expert",
+                tokens_per_expert,
+                self.layer_number,
+                self.config.num_layers,
+                reduce_group=parallel_state.get_data_parallel_group())
+            
         return scores, map
 
     def compute_routing_scores_for_aux_loss(self, logits: torch.Tensor) -> torch.Tensor:
@@ -248,6 +259,15 @@ class TopKRouter(Router):
             probs = self.apply_load_balancing_loss(
                 activation=probs, load_balancing_loss_func=aux_loss_func
             )
+
+            if self.config.moe_tokens_logging:
+                save_to_tokens_per_expert_tracker(
+                    "aux_tokens_per_expert",
+                    tokens_per_expert,
+                    self.layer_number,
+                    self.config.num_layers,
+                    reduce_group=parallel_state.get_data_parallel_group())
+            
         return probs, routing_map
 
     def seq_aux_loss_load_balancing(self, logits: torch.Tensor, bsz: int, seq_length: int):
@@ -293,6 +313,14 @@ class TopKRouter(Router):
                 activation=probs, load_balancing_loss_func=aux_loss_func
             )
 
+            if self.config.moe_tokens_logging:
+                save_to_tokens_per_expert_tracker(
+                    "seq_aux_tokens_per_expert",
+                    tokens_per_expert,
+                    self.layer_number,
+                    self.config.num_layers,
+                    reduce_group=parallel_state.get_data_parallel_group())
+            
         return probs, routing_map
 
     def global_batch_loss_load_balancing(self, logits: torch.Tensor):
@@ -332,13 +360,14 @@ class TopKRouter(Router):
             probs = self.apply_load_balancing_loss(
                 activation=probs, load_balancing_loss_func=aux_loss_func
             )
-
-            save_to_tokens_per_expert_tracker(
-                "global_batch_tokens_per_expert",
-                tokens_per_expert,
-                self.layer_number,
-                self.config.num_layers,
-                reduce_group=parallel_state.get_data_parallel_group())
+            
+            if self.config.moe_tokens_logging:
+                save_to_tokens_per_expert_tracker(
+                    "global_batch_tokens_per_expert",
+                    tokens_per_expert,
+                    self.layer_number,
+                    self.config.num_layers,
+                    reduce_group=parallel_state.get_data_parallel_group())
 
         return probs, routing_map
 

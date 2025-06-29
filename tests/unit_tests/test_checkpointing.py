@@ -95,6 +95,8 @@ def create_args():
     args.retro_add_retriever = False
     args.ckpt_convert_update_legacy_dist_opt_format = False
     args.ckpt_step = None
+    args.local_rank = 0
+    args.ckpt_upload_blob_path = None
 
     yield args
 
@@ -148,7 +150,8 @@ def test_load_base_checkpoint(init_model_parallel, create_args, ckpt_format, tmp
 
 
 @pytest.mark.parametrize("ckpt_format", ["torch", "torch_dcp"])
-def test_save_checkpoint(init_model_parallel, create_args, tmp_path_dist_ckpt, ckpt_format):
+@pytest.mark.parametrize("ckpt_isolated_save", [True, False])
+def test_save_checkpoint(init_model_parallel, create_args, tmp_path_dist_ckpt, ckpt_format, ckpt_isolated_save):
     """Test save_checkpoint."""
     args = create_args
     args.ckpt_format = ckpt_format
@@ -158,6 +161,7 @@ def test_save_checkpoint(init_model_parallel, create_args, tmp_path_dist_ckpt, c
 
     args.use_distributed_optimizer = ckpt_format != "torch_dcp"
     args.use_dist_ckpt = ckpt_format != "torch"
+    args.ckpt_isolated_save = ckpt_isolated_save
 
     iteration = 123
     config = TransformerConfig(num_layers=1, kv_channels=1)
@@ -189,7 +193,8 @@ def test_save_checkpoint(init_model_parallel, create_args, tmp_path_dist_ckpt, c
 
 
 @pytest.mark.parametrize("ckpt_format", ["torch"])
-def test_load_checkpoint(init_model_parallel, create_args, tmp_path_dist_ckpt, ckpt_format):
+@pytest.mark.parametrize("ckpt_isolated_save", [True, False])
+def test_load_checkpoint(init_model_parallel, create_args, tmp_path_dist_ckpt, ckpt_format, ckpt_isolated_save):
     """Test load_checkpoint."""
     args = create_args
     args.ckpt_format = ckpt_format
@@ -210,6 +215,7 @@ def test_load_checkpoint(init_model_parallel, create_args, tmp_path_dist_ckpt, c
     args.vocab_file = None
     args.tensor_model_parallel_size = 1
     args.pipeline_model_parallel_size = 1
+    args.ckpt_isolated_save = ckpt_isolated_save
 
     with TempNamedDir(tmp_path_dist_ckpt / "test_load_checkpoint", sync=True) as ckpt_dir:
         args.load = ckpt_dir
