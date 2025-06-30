@@ -499,6 +499,13 @@ class TopKRouter(Router):
                 activation = MoEAuxLossAutoScaler.apply(activation, onehot_lbl)
             
             if self.config.moe_tokens_logging:
+                save_to_tokens_per_expert_tracker(
+                    "global_batch_tokens_per_expert",
+                    routing_map.sum(dim=0),
+                    self.layer_number,
+                    self.config.num_layers,
+                    reduce_group=parallel_state.get_data_parallel_group()
+                )
                 save_to_aux_losses_tracker(
                     "onehot_load_balancing_loss", onehot_lbl / moe_onehot_lbl_coeff, self.layer_number, self.config.num_layers
                 )
@@ -557,6 +564,10 @@ class TopKRouter(Router):
             )
         else:
             raise ValueError(f"Unsupported MoE routing type: {self.routing_type}")
+
+        # Apply one-hot load balancing loss
+        scores = self.apply_onehot_load_balancing_loss(scores, logits, routing_map)
+
         # Prevent extra local tokens accumulation on evaluation or activation recomputation
         if self.enable_expert_bias and torch.is_grad_enabled():
             with torch.no_grad():
