@@ -462,6 +462,52 @@ class TopKRouter(Router):
         else:
             return input
 
+    def apply_onehot_load_balancing_loss(self, activation, logits, routing_map):
+        moe_onehot_lbl_coeff = self.config.moe_onehot_lbl_coeff
+        moe_onehot_lbl_temperature = self.config.moe_onehot_lbl_temperature
+        if moe_onehot_lbl_coeff == 0:
+            return activation
+        
+        if self.training and torch.is_grad_enabled():
+            moe_onehot_lbl_coeff = (
+                moe_onehot_lbl_coeff
+                / parallel_state.get_tensor_and_context_parallel_world_size()
+            )
+
+            logits = logits / moe_onehot_lbl_temperature
+            scores_per_token = self.compute_routing_scores_for_aux_loss(logits)
+
+            approximated_f = scores_per_token.mean(dim=0)
+            approximated_f_l2_loss = torch.sum(approximated_f ** 2, dim=-1) * approximated_f.size(-1)
+
+            topk_scores_per_token = scores_per_token[routing_map].view(-1, self.topk)
+            sum_topk_scores_per_token = topk_scores_per_token.sum(dim=-1)
+            maximize_topk_loss = sum_topk_scores_per_token.mean()
+
+            onehot_lbl = approximated_f_l2_loss / maximize_topk_loss
+            onehot_lbl = onehot_lbl * moe_onehot_lbl_coeff
+            if self.calculate_per_token_loss:
+                # The expected final scaling for kl_loss gradients is
+                # 1/(num_micro_batches * dp_size).
+                # After commit 02648000, Megatron started using the number of total tokens
+                # to scale gradients under the argument of calculate_per_token_loss,
+                # which scales both the main_loss gradient and kl_loss gradient by
+                # 1/(num_local_tokens * dp_size * num_micro_batches) in finalize_model_grads().
+                # To correct this scaling, we need to scale the kl_loss by num_local_tokens here.
+                activation = MoEAuxLossAutoScaler.apply(activation, onehot_lbl * activation.shape[0])
+            else:
+                activation = MoEAuxLossAutoScaler.apply(activation, onehot_lbl)
+            save_to_aux_losses_tracker(
+                "onehot_load_balancing_loss", onehot_lbl / moe_onehot_lbl_coeff, self.layer_number, self.config.num_layers
+            )
+            save_to_aux_losses_tracker(
+                "approximated_f_l2_loss", approximated_f_l2_loss, self.layer_number, self.config.num_layers
+            )
+            save_to_aux_losses_tracker(
+                "maximize_topk_loss", maximize_topk_loss, self.layer_number, self.config.num_layers
+            )
+        return activation
+
     def routing(self, logits: torch.Tensor):
         """Top-k routing function
 

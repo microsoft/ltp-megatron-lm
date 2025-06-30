@@ -2601,6 +2601,10 @@ def _add_moe_args(parser):
                        help='Scaling coefficient for the z-loss: a starting value of 1e-3 is recommended.')
     group.add_argument('--moe-input-jitter-eps', type=float, default=None,
                        help='Add noise to the input tensor by applying jitter with a specified epsilon value.')
+    group.add_argument('--moe-onehot-lbl-coeff', type=float, default=0.0,
+                       help='Scaling coefficient for the one-hot load balancing loss: a starting value of 1e-2 is recommended.')
+    group.add_argument('--moe-onehot-lbl-temperature', type=float, default=1.0,
+                       help='Temperature for the one-hot load balancing loss: a starting value of 0.1 is recommended.')
     group.add_argument('--moe-per-layer-logging', action='store_true',
                        help='Enable per-layer logging for MoE, currently supports auxiliary loss and z loss.')
     group.add_argument('--moe-tokens-logging', action='store_true',

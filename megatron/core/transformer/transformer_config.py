@@ -431,6 +431,12 @@ class TransformerConfig(ModelParallelConfig):
     moe_input_jitter_eps: Optional[float] = None
     """Add noise to the input tensor by applying jitter with a specified epsilon value."""
 
+    moe_onehot_lbl_coeff: float = 0  # 1e-2 would be a good start value for one-hot load balancing loss
+    """Scaling coefficient for the one-hot load balancing loss. A starting value of 1e-2 is recommended."""
+
+    moe_onehot_lbl_temperature: float = 1.0
+    """Temperature for the one-hot load balancing loss. A starting value of 0.1 is recommended."""
+
     moe_token_dropping: bool = False
     """This feature involves selectively dropping and padding tokens for each expert to achieve a
     specified capacity, similar to GShard, Switch-Transformer, and DeepSpeed-MoE. Note that this is

@@ -1538,6 +1538,11 @@ def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_r
                 track_names.append("global_batch_tokens_per_expert")
         if args.moe_z_loss_coeff is not None:
             track_names.append("z_loss")
+        if args.moe_onehot_lbl_coeff > 0:
+            track_names.append("onehot_load_balancing_loss")
+            track_names.append("approximated_f_l2_loss")
+            track_names.append("maximize_topk_loss")
+            track_names.append("global_batch_tokens_per_expert")
         track_moe_metrics(
             loss_scale=moe_loss_scale,
             iteration=iteration,
