@@ -194,14 +194,25 @@ def top1_load_balancing_loss_func(
     """
     num_experts = probs.shape[-1]
 
-    approximated_f = probs.mean(dim=0)
-    approximated_f_l2_loss = torch.sum(approximated_f ** 2, dim=-1) * num_experts
+    differentiable_f = probs.mean(dim=0)
 
     topk_scores_per_token = probs[routing_map].view(-1, topk)
     sum_topk_scores_per_token = topk_scores_per_token.sum(dim=-1)
-    maximize_topk_loss = sum_topk_scores_per_token.mean()
+    mean_topk_scores = sum_topk_scores_per_token.mean()
 
-    aux_loss = approximated_f_l2_loss / maximize_topk_loss
+    # If the sequence is partitioned by certain parallelism strategies like Sequence Parallelism
+    # or Context Parallelism, compute the gradient of the auxiliary loss with respect to the full
+    # sequence.
+    if sequence_partition_group is not None:
+        differentiable_f /= sequence_partition_group.size()
+        mean_topk_scores /= sequence_partition_group.size()
+        differentiable_f_topk = torch.stack([differentiable_f, mean_topk_scores])
+        torch.distributed.nn.all_reduce(differentiable_f_topk, group=sequence_partition_group)
+        differentiable_f, mean_topk_scores = differentiable_f_topk[0], differentiable_f_topk[1]
+
+    differentiable_f_l2_loss = torch.sum(differentiable_f ** 2, dim=-1) * num_experts
+
+    aux_loss = differentiable_f_l2_loss / mean_topk_scores
     aux_loss *= moe_aux_loss_coeff
     return aux_loss
 
