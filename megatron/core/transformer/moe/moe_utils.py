@@ -214,6 +214,7 @@ def top1_load_balancing_loss_func(
 
     aux_loss = differentiable_f_l2_loss / mean_topk_scores
     aux_loss *= moe_aux_loss_coeff
+    
     return aux_loss
 
 
