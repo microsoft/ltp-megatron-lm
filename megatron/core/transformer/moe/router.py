@@ -469,11 +469,13 @@ class TopKRouter(Router):
             return activation
         
         if self.training and torch.is_grad_enabled():
-            moe_onehot_lbl_coeff = (
-                moe_onehot_lbl_coeff
-                / parallel_state.get_tensor_and_context_parallel_world_size()
-            )
-
+            sequence_partition_group = None
+            if self.config.moe_token_dispatcher_type == "alltoall_seq":
+                sequence_partition_group = parallel_state.get_context_parallel_group()
+                moe_aux_loss_coeff /= parallel_state.get_tensor_model_parallel_world_size()
+            elif parallel_state.get_tensor_and_context_parallel_world_size() > 1:
+                sequence_partition_group = parallel_state.get_tensor_and_context_parallel_group()
+      
             logits = logits / moe_onehot_lbl_temperature
             scores_per_token = self.compute_routing_scores_for_aux_loss(logits)
 
@@ -507,13 +509,25 @@ class TopKRouter(Router):
                     reduce_group=parallel_state.get_data_parallel_group()
                 )
                 save_to_aux_losses_tracker(
-                    "onehot_load_balancing_loss", onehot_lbl / moe_onehot_lbl_coeff, self.layer_number, self.config.num_layers
+                    "onehot_load_balancing_loss", 
+                    onehot_lbl / moe_onehot_lbl_coeff, 
+                    self.layer_number, 
+                    self.config.num_layers, 
+                    reduce_group=sequence_partition_group
                 )
                 save_to_aux_losses_tracker(
-                    "approximated_f_l2_loss", approximated_f_l2_loss, self.layer_number, self.config.num_layers
+                    "approximated_f_l2_loss", 
+                    approximated_f_l2_loss, 
+                    self.layer_number, 
+                    self.config.num_layers,
+                    reduce_group=sequence_partition_group
                 )
                 save_to_aux_losses_tracker(
-                    "maximize_topk_loss", maximize_topk_loss, self.layer_number, self.config.num_layers
+                    "maximize_topk_loss", 
+                    maximize_topk_loss, 
+                    self.layer_number, 
+                    self.config.num_layers,
+                    reduce_group=sequence_partition_group
                 )
         return activation
 
