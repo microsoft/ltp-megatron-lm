@@ -166,6 +166,8 @@ class TestTop1AuxLoss:
             moe_token_dispatcher_type="alltoall",
             moe_aux_loss_coeff=0.1,
             moe_top1_loss_temperature=0.1,
+            moe_router_score_function="sigmoid",
+            moe_aux_loss_score_function="softmax",
         )
         moe_layer = baseline_container.moe_layer
         self.input = torch.randn((32, 8, moe_layer.config.hidden_size)).cuda()
