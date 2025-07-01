@@ -513,14 +513,14 @@ class TopKRouter(Router):
                     onehot_lbl / moe_onehot_lbl_coeff, 
                     self.layer_number, 
                     self.config.num_layers, 
-                    reduce_group=sequence_partition_group
+                    avg_group=sequence_partition_group
                 )
                 save_to_aux_losses_tracker(
                     "approximated_f_l2_loss", 
                     approximated_f_l2_loss, 
                     self.layer_number, 
                     self.config.num_layers,
-                    reduce_group=sequence_partition_group
+                    avg_group=sequence_partition_group
                 )
                 save_to_aux_losses_tracker(
                     "maximize_topk_loss", 
