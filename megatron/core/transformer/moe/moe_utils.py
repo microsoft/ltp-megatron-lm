@@ -175,7 +175,8 @@ def top1_load_balancing_loss_func(
     sequence_partition_group=None,
 ):
     """
-    Calculate the top-1 auxiliary loss.
+    Calculate the top-1 auxiliary loss. It is recommended to use this loss with topk=1,
+    since the differentiable frequency of each expert can achieve a more precise approximation in this case.
 
     Args:
         probs (torch.Tensor): Softmax probabilities output by the router for each token.
@@ -197,7 +198,7 @@ def top1_load_balancing_loss_func(
 
     topk_scores_per_token = probs[routing_map].view(-1, topk)
     sum_topk_scores_per_token = topk_scores_per_token.sum(dim=-1)
-    mean_topk_scores = sum_topk_scores_per_token.mean()
+    mean_topk_scores = sum_topk_scores_per_token.mean(dim=-1)
 
     # If the sequence is partitioned by certain parallelism strategies like Sequence Parallelism
     # or Context Parallelism, compute the gradient of the auxiliary loss with respect to the full

@@ -413,7 +413,7 @@ class TopKRouter(Router):
             
             if self.config.moe_tokens_logging:
                 save_to_tokens_per_expert_tracker(
-                    "global_batch_tokens_per_expert",
+                    "top1_batch_tokens_per_expert",
                     tokens_per_expert,
                     self.layer_number,
                     self.config.num_layers,

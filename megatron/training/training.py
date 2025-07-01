@@ -1534,8 +1534,10 @@ def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_r
                 track_names.append("aux_tokens_per_expert")
             elif args.moe_router_load_balancing_type == "seq_aux_loss":
                 track_names.append("seq_aux_tokens_per_expert")
-            elif args.moe_router_load_balancing_type in ["global_batch_loss", "top1_loss"]:
+            elif args.moe_router_load_balancing_type == "global_batch_loss":
                 track_names.append("global_batch_tokens_per_expert")
+            elif args.moe_router_load_balancing_type == "top1_loss":
+                track_names.append("top1_batch_tokens_per_expert")
         if args.moe_z_loss_coeff is not None:
             track_names.append("z_loss")
         track_moe_metrics(
