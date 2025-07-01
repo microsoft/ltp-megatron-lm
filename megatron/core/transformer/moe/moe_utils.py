@@ -175,8 +175,12 @@ def top1_load_balancing_loss_func(
     sequence_partition_group=None,
 ):
     """
-    Calculate the top-1 auxiliary loss. It is recommended to use this loss with topk=1,
-    since the differentiable frequency of each expert can achieve a more precise approximation in this case.
+    Calculate the top-1 auxiliary loss.
+    In extremely sparse settings, the routing probabilities in lower MoE layers tend to converge to a uniform distribution. 
+    As a result, even with imbalanced routing frequencies, the value of existing load balance loss remains low. 
+    This loss approximates routing frequency by applying a temperature-scaled softmax to each token's routing probabilities and constraining the top-k scores to be as large as possible,
+    then optimizes the L2 norm of the resulting differentiable approximate frequency to ensure load balancing.
+    However, since the temperature-scaled softmax pushes routing probabilities toward a one-hot distribution, it is recommended to use this loss with topk=1.
 
     Args:
         probs (torch.Tensor): Softmax probabilities output by the router for each token.
