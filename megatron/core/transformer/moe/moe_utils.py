@@ -210,9 +210,8 @@ def top1_load_balancing_loss_func(
     if sequence_partition_group is not None:
         differentiable_f /= sequence_partition_group.size()
         mean_topk_scores /= sequence_partition_group.size()
-        differentiable_f_topk = torch.stack([differentiable_f, mean_topk_scores])
-        torch.distributed.nn.all_reduce(differentiable_f_topk, group=sequence_partition_group)
-        differentiable_f, mean_topk_scores = differentiable_f_topk[0], differentiable_f_topk[1]
+        torch.distributed.nn.all_reduce(differentiable_f, group=sequence_partition_group)
+        torch.distributed.nn.all_reduce(mean_topk_scores, group=sequence_partition_group)
 
     differentiable_f_l2_loss = torch.sum(differentiable_f ** 2, dim=-1) * num_experts
 
