@@ -1525,7 +1525,7 @@ def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_r
     if args.num_experts is not None:
         moe_loss_scale = 1 / get_num_microbatches()
         track_names = []
-        if args.moe_router_load_balancing_type in ["aux_loss", "seq_aux_loss", "global_batch_loss"]:
+        if args.moe_router_load_balancing_type in ["aux_loss", "seq_aux_loss", "global_batch_loss", "top1_loss"]:
             track_names.append("load_balancing_loss")
         if args.moe_tokens_logging:
             if args.moe_router_load_balancing_type == "sinkhorn":
@@ -1534,15 +1534,10 @@ def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_r
                 track_names.append("aux_tokens_per_expert")
             elif args.moe_router_load_balancing_type == "seq_aux_loss":
                 track_names.append("seq_aux_tokens_per_expert")
-            elif args.moe_router_load_balancing_type == "global_batch_loss":
+            elif args.moe_router_load_balancing_type in ["global_batch_loss", "top1_loss"]:
                 track_names.append("global_batch_tokens_per_expert")
         if args.moe_z_loss_coeff is not None:
             track_names.append("z_loss")
-        if args.moe_onehot_lbl_coeff > 0:
-            track_names.append("onehot_load_balancing_loss")
-            track_names.append("approximated_f_l2_loss")
-            track_names.append("maximize_topk_loss")
-            track_names.append("global_batch_tokens_per_expert")
         track_moe_metrics(
             loss_scale=moe_loss_scale,
             iteration=iteration,

@@ -167,6 +167,45 @@ def global_batch_load_balancing_loss_func(
     return global_batch_aux_loss
 
 
+def top1_load_balancing_loss_func(
+    probs: torch.Tensor,
+    routing_map: torch.Tensor,
+    topk: int,
+    moe_aux_loss_coeff: float,
+    sequence_partition_group=None,
+):
+    """
+    Calculate the auxiliary loss in global-batch level.
+    Refer to https://arxiv.org/abs/2501.11873 for details.
+
+    Args:
+        probs (torch.Tensor): Softmax probabilities output by the router for each token.
+                              Shape in [num_tokens, num_experts].
+        routing_map (torch.Tensor): Mapping of tokens to experts assignment.
+                                    Shape in [num_tokens, num_experts].
+        topk (int): Number of experts to route to for each token.
+        moe_aux_loss_coeff (float): Scaling coefficient for the auxiliary loss.
+        sequence_partition_group (optional): The parallel group over which the sequence is
+                                             partitioned. If None, no partitioning is applied.
+                                             Defaults to None.
+
+    Returns:
+        torch.Tensor: The sequence auxiliary loss for load balancing.
+    """
+    num_experts = probs.shape[-1]
+
+    approximated_f = probs.mean(dim=0)
+    approximated_f_l2_loss = torch.sum(approximated_f ** 2, dim=-1) * num_experts
+
+    topk_scores_per_token = probs[routing_map].view(-1, topk)
+    sum_topk_scores_per_token = topk_scores_per_token.sum(dim=-1)
+    maximize_topk_loss = sum_topk_scores_per_token.mean()
+
+    aux_loss = approximated_f_l2_loss / maximize_topk_loss
+    aux_loss *= moe_aux_loss_coeff
+    return aux_loss
+
+
 def z_loss_func(logits, z_loss_coeff):
     """Encourages the router's logits to remain small to enhance stability.
     Please refer to the ST-MoE paper (https://arxiv.org/pdf/2202.08906.pdf) for details.

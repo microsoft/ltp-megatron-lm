@@ -20,6 +20,7 @@ from megatron.core.transformer.moe.moe_utils import (
     switch_load_balancing_loss_func,
     topk_softmax_with_capacity,
     z_loss_func,
+    top1_load_balancing_loss_func,
 )
 from megatron.core.transformer.transformer_config import TransformerConfig
 
@@ -370,6 +371,56 @@ class TopKRouter(Router):
 
         return probs, routing_map
 
+    def top1_loss_load_balancing(self, logits: torch.Tensor):
+        """Apply top1-loss-based load balancing to the logits tensor.
+
+        Args:
+            logits (torch.Tensor): The logits tensor after gating, shape: [num_tokens, num_experts].
+
+        Returns:
+            probs (torch.Tensor): The probabilities of token to experts assignment.
+            routing_map (torch.Tensor): The mask of token to experts assignment.
+        """
+
+        probs, routing_map, tokens_per_expert = topk_softmax_with_capacity(
+            logits,
+            self.topk,
+            capacity_factor=self.config.moe_expert_capacity_factor,
+            pad_to_capacity=self.config.moe_pad_expert_input_to_capacity,
+            drop_policy=self.config.moe_token_drop_policy,
+            use_pre_softmax=self.config.moe_router_pre_softmax,
+            num_groups=self.config.moe_router_num_groups,
+            group_topk=self.config.moe_router_group_topk,
+            scaling_factor=self.config.moe_router_topk_scaling_factor,
+            deterministic_mode=self.config.deterministic_mode,
+            score_function=self.score_function,
+            expert_bias=self.expert_bias,
+        )
+
+        if self.training and torch.is_grad_enabled():
+            # Apply auxiliary load balancing loss
+            logits = logits / self.config.moe_top1_loss_temperature
+            scores = self.compute_routing_scores_for_aux_loss(logits)
+            aux_loss_func = partial(
+                top1_load_balancing_loss_func,
+                probs=scores,
+                routing_map=routing_map,
+                topk=self.topk,
+            )
+            probs = self.apply_load_balancing_loss(
+                activation=probs, load_balancing_loss_func=aux_loss_func
+            )
+            
+            if self.config.moe_tokens_logging:
+                save_to_tokens_per_expert_tracker(
+                    "global_batch_tokens_per_expert",
+                    tokens_per_expert,
+                    self.layer_number,
+                    self.config.num_layers,
+                    reduce_group=parallel_state.get_data_parallel_group())
+
+        return probs, routing_map
+
     def apply_load_balancing_loss(
         self, activation: torch.Tensor, load_balancing_loss_func: Callable
     ):
@@ -462,75 +513,6 @@ class TopKRouter(Router):
         else:
             return input
 
-    def apply_onehot_load_balancing_loss(self, activation, logits, routing_map):
-        moe_onehot_lbl_coeff = self.config.moe_onehot_lbl_coeff
-        moe_onehot_lbl_temperature = self.config.moe_onehot_lbl_temperature
-        if moe_onehot_lbl_coeff == 0:
-            return activation
-        
-        if self.training and torch.is_grad_enabled():
-            sequence_partition_group = None
-            if self.config.moe_token_dispatcher_type == "alltoall_seq":
-                sequence_partition_group = parallel_state.get_context_parallel_group()
-                moe_aux_loss_coeff /= parallel_state.get_tensor_model_parallel_world_size()
-            elif parallel_state.get_tensor_and_context_parallel_world_size() > 1:
-                sequence_partition_group = parallel_state.get_tensor_and_context_parallel_group()
-      
-            logits = logits / moe_onehot_lbl_temperature
-            scores_per_token = self.compute_routing_scores_for_aux_loss(logits)
-
-            approximated_f = scores_per_token.mean(dim=0)
-            approximated_f_l2_loss = torch.sum(approximated_f ** 2, dim=-1) * approximated_f.size(-1)
-
-            topk_scores_per_token = scores_per_token[routing_map].view(-1, self.topk)
-            sum_topk_scores_per_token = topk_scores_per_token.sum(dim=-1)
-            maximize_topk_loss = sum_topk_scores_per_token.mean()
-
-            onehot_lbl = approximated_f_l2_loss / maximize_topk_loss
-            onehot_lbl = onehot_lbl * moe_onehot_lbl_coeff
-            if self.calculate_per_token_loss:
-                # The expected final scaling for kl_loss gradients is
-                # 1/(num_micro_batches * dp_size).
-                # After commit 02648000, Megatron started using the number of total tokens
-                # to scale gradients under the argument of calculate_per_token_loss,
-                # which scales both the main_loss gradient and kl_loss gradient by
-                # 1/(num_local_tokens * dp_size * num_micro_batches) in finalize_model_grads().
-                # To correct this scaling, we need to scale the kl_loss by num_local_tokens here.
-                activation = MoEAuxLossAutoScaler.apply(activation, onehot_lbl * activation.shape[0])
-            else:
-                activation = MoEAuxLossAutoScaler.apply(activation, onehot_lbl)
-            
-            if self.config.moe_tokens_logging:
-                save_to_tokens_per_expert_tracker(
-                    "global_batch_tokens_per_expert",
-                    routing_map.sum(dim=0),
-                    self.layer_number,
-                    self.config.num_layers,
-                    reduce_group=parallel_state.get_data_parallel_group()
-                )
-                save_to_aux_losses_tracker(
-                    "onehot_load_balancing_loss", 
-                    onehot_lbl / moe_onehot_lbl_coeff, 
-                    self.layer_number, 
-                    self.config.num_layers, 
-                    avg_group=sequence_partition_group
-                )
-                save_to_aux_losses_tracker(
-                    "approximated_f_l2_loss", 
-                    approximated_f_l2_loss, 
-                    self.layer_number, 
-                    self.config.num_layers,
-                    avg_group=sequence_partition_group
-                )
-                save_to_aux_losses_tracker(
-                    "maximize_topk_loss", 
-                    maximize_topk_loss, 
-                    self.layer_number, 
-                    self.config.num_layers,
-                    avg_group=sequence_partition_group
-                )
-        return activation
-
     def routing(self, logits: torch.Tensor):
         """Top-k routing function
 
@@ -560,6 +542,8 @@ class TopKRouter(Router):
             scores, routing_map = self.seq_aux_loss_load_balancing(logits, bsz, seq_length)
         elif self.routing_type == "global_batch_loss":
             scores, routing_map = self.global_batch_loss_load_balancing(logits)
+        elif self.routing_type == "top1_loss":
+            scores, routing_map = self.top1_loss_load_balancing(logits)
         elif self.routing_type == "none":
             # A naive top-k routing without load balancing
             scores, routing_map, _ = topk_softmax_with_capacity(
@@ -578,10 +562,6 @@ class TopKRouter(Router):
             )
         else:
             raise ValueError(f"Unsupported MoE routing type: {self.routing_type}")
-
-        # Apply one-hot load balancing loss
-        scores = self.apply_onehot_load_balancing_loss(scores, logits, routing_map)
-
         # Prevent extra local tokens accumulation on evaluation or activation recomputation
         if self.enable_expert_bias and torch.is_grad_enabled():
             with torch.no_grad():

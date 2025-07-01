@@ -2553,9 +2553,9 @@ def _add_moe_args(parser):
                        'Upcycling is implemented on the top of distributed checkpointing, so it supports parallel modes different from the dense model.')
     # Router arguments
     group.add_argument('--moe-router-load-balancing-type', type=str,
-                       choices=['aux_loss', 'seq_aux_loss', 'sinkhorn', 'global_batch_loss', 'none'],
+                       choices=['aux_loss', 'seq_aux_loss', 'sinkhorn', 'global_batch_loss', 'top1_loss', 'none'],
                        default='aux_loss',
-                       help='Determines the load balancing strategy for the router. "aux_loss" corresponds to the load balancing loss used in GShard and SwitchTransformer; "seq_aux_loss" corresponds to the load balancing loss used in DeepSeekV2, which computes the loss for each individual sample; "sinkhorn" corresponds to the balancing algorithm used in S-BASE; "global_batch_loss" corresponds to the global-batch load balancing loss (see https://arxiv.org/abs/2501.11873 for details), and "none" implies no load balancing. The default is "aux_loss".')
+                       help='Determines the load balancing strategy for the router. "aux_loss" corresponds to the load balancing loss used in GShard and SwitchTransformer; "seq_aux_loss" corresponds to the load balancing loss used in DeepSeekV2, which computes the loss for each individual sample; "sinkhorn" corresponds to the balancing algorithm used in S-BASE; "global_batch_loss" corresponds to the global-batch load balancing loss (see https://arxiv.org/abs/2501.11873 for details), "top1_loss" corresponds to the top-1 load balancing loss, and "none" implies no load balancing. The default is "aux_loss".')
     group.add_argument('--moe-router-dtype', type=str,
                        choices=['fp32', 'fp64'],
                        default=None,
@@ -2601,10 +2601,8 @@ def _add_moe_args(parser):
                        help='Scaling coefficient for the z-loss: a starting value of 1e-3 is recommended.')
     group.add_argument('--moe-input-jitter-eps', type=float, default=None,
                        help='Add noise to the input tensor by applying jitter with a specified epsilon value.')
-    group.add_argument('--moe-onehot-lbl-coeff', type=float, default=0.0,
-                       help='Scaling coefficient for the one-hot load balancing loss: a starting value of 1e-2 is recommended.')
-    group.add_argument('--moe-onehot-lbl-temperature', type=float, default=1.0,
-                       help='Temperature for the one-hot load balancing loss: a starting value of 0.1 is recommended.')
+    group.add_argument('--moe-top1-loss-temperature', type=float, default=1.0,
+                       help='Temperature for the top-1 load balancing loss: a starting value of 0.1 is recommended.')
     group.add_argument('--moe-per-layer-logging', action='store_true',
                        help='Enable per-layer logging for MoE, currently supports auxiliary loss and z loss.')
     group.add_argument('--moe-tokens-logging', action='store_true',
