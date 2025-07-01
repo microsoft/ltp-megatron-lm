@@ -527,7 +527,7 @@ class TopKRouter(Router):
                     maximize_topk_loss, 
                     self.layer_number, 
                     self.config.num_layers,
-                    reduce_group=sequence_partition_group
+                    avg_group=sequence_partition_group
                 )
         return activation
 
