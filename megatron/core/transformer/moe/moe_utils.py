@@ -175,8 +175,7 @@ def top1_load_balancing_loss_func(
     sequence_partition_group=None,
 ):
     """
-    Calculate the auxiliary loss in global-batch level.
-    Refer to https://arxiv.org/abs/2501.11873 for details.
+    Calculate the top-1 auxiliary loss.
 
     Args:
         probs (torch.Tensor): Softmax probabilities output by the router for each token.
@@ -214,7 +213,7 @@ def top1_load_balancing_loss_func(
 
     aux_loss = differentiable_f_l2_loss / mean_topk_scores
     aux_loss *= moe_aux_loss_coeff
-    
+
     return aux_loss
 
 
