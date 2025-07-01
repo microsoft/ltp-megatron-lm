@@ -2557,7 +2557,7 @@ def _add_moe_args(parser):
                        default='aux_loss',
                        help='Determines the load balancing strategy for the router. "aux_loss" corresponds to the load balancing loss used in GShard and SwitchTransformer; "seq_aux_loss" corresponds to the load balancing loss used in DeepSeekV2, which computes the loss for each individual sample; "sinkhorn" corresponds to the balancing algorithm used in S-BASE; "global_batch_loss" corresponds to the global-batch load balancing loss (see https://arxiv.org/abs/2501.11873 for details); "top1_loss" corresponds to the top-1 load balancing loss, and "none" implies no load balancing. The default is "aux_loss".')
     group.add_argument('--moe-top1-loss-temperature', type=float, default=1.0,
-                       help='Temperature for the top-1 load balancing loss: a starting value of 0.1 is recommended.')
+                       help='Temperature for the top-1 load balancing loss. A starting value of 0.1 is recommended.')
     group.add_argument('--moe-router-dtype', type=str,
                        choices=['fp32', 'fp64'],
                        default=None,
