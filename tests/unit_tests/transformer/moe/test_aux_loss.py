@@ -165,7 +165,6 @@ class TestGlobalAuxLoss:
             moe_router_load_balancing_type="global_batch_loss",
             moe_token_dispatcher_type="alltoall",
             moe_aux_loss_coeff=0.1,
-            moe_top1_loss_temperature=0.1,
             moe_router_score_function="sigmoid",
             moe_aux_loss_score_function="softmax",
         )
@@ -198,7 +197,6 @@ class TestGlobalAuxLoss:
             moe_router_load_balancing_type="global_batch_loss",
             moe_token_dispatcher_type="alltoall",
             moe_aux_loss_coeff=0.1,
-            moe_top1_loss_temperature=0.1,
             moe_router_score_function="sigmoid",
             moe_aux_loss_score_function="softmax",
         )
