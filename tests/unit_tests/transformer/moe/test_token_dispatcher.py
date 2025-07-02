@@ -73,6 +73,9 @@ class MoEModelTestContainer:
             add_bias_linear=kwargs.get("add_bias_linear", False),
             moe_permute_fusion=kwargs.get("moe_permute_fusion", False),
             moe_enable_deepep=kwargs.get("moe_enable_deepep", False),
+            moe_top1_loss_temperature=kwargs.get("moe_top1_loss_temperature", 1.0),
+            moe_router_score_function=kwargs.get("moe_router_score_function", "softmax"),
+            moe_aux_loss_score_function=kwargs.get("moe_aux_loss_score_function", "softmax"),
         )
 
         # init moe layer
