@@ -153,7 +153,7 @@ class MegatronOptimizer(ABC):
 
         return grads_for_norm
 
-    def get_main_grads_for_grad_norm_per_layer(self, global_layer_offset) -> Dict[Union[int, str], List[torch.Tensor]]:
+    def get_main_grads_for_grad_norm_per_layer(self, global_layer_offsets) -> Dict[Union[int, str], List[torch.Tensor]]:
         """
         Get per-layer main_grads that should be taken into account to compute the grad norm.
         Currently only support DistributedDataParallel (DDP).
@@ -166,7 +166,11 @@ class MegatronOptimizer(ABC):
             else:
                 model_chunks = self.optimizer.model_chunks
 
-            for model_chunk in model_chunks:
+            assert len(model_chunks) == len(global_layer_offsets), \
+                'Number of model chunks must be equal to length of global_layer_offsets (vpp size)'
+
+            for vpp_rank, model_chunk in enumerate(model_chunks):
+                global_layer_offset = global_layer_offsets[vpp_rank]
                 named_parameters = model_chunk.named_parameters()
 
                 for name, param in named_parameters:
@@ -259,9 +263,9 @@ class MegatronOptimizer(ABC):
         return total_norm
 
     @torch.no_grad()
-    def get_grad_norm_per_layer(self, num_layers, global_layer_offset, extra_patterns):
+    def get_grad_norm_per_layer(self, num_layers, global_layer_offsets, extra_patterns):
         """Compute and return per-layer grad norm."""
-        grads_for_norm_per_layer = self.get_main_grads_for_grad_norm_per_layer(global_layer_offset)
+        grads_for_norm_per_layer = self.get_main_grads_for_grad_norm_per_layer(global_layer_offsets)
         total_norm_per_layer = [0] * (num_layers + len(extra_patterns))
         for global_layer_id in grads_for_norm_per_layer:
             grads_for_norm = grads_for_norm_per_layer[global_layer_id]

@@ -7,6 +7,7 @@ MAMBA_FORCE_BUILD=TRUE pip install git+https://github.com/state-spaces/mamba.git
 apt purge -y python3-blinker
 pip install flask flask-restful tiktoken tensorstore
 
+export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 export NCCL_DEBUG=WARN
 export NCCL_SOCKET_IFNAME=eth0
@@ -34,15 +35,6 @@ clear_previous_runs() {
 }
 
 # Exclude test categories that fail to pass in the full test.
-# Some test cases fail in:
-# - data
-# - dist_checkpointing
-# - models
-# - test_checkpointing
-# - test_parallel_state
-# - test_tokenizer.py \
-# - transformer
-# All test cases fail in:
 # - inference/engines/test_dynamic_engine.py
 
 clear_previous_runs
@@ -50,83 +42,6 @@ torchrun \
   ${TORCHRUN_ARGS[@]} \
   -m pytest -vxs \
   ${PYTEST_COV_ARGS[@]} \
-  --ignore tests/unit_tests/data \
-  --ignore tests/unit_tests/dist_checkpointing \
+  -m "not flaky_in_dev and not flaky" \
   --ignore tests/unit_tests/inference/engines/test_dynamic_engine.py \
-  --ignore tests/unit_tests/models \
-  --ignore tests/unit_tests/test_checkpointing.py \
-  --ignore tests/unit_tests/test_parallel_state.py \
-  --ignore tests/unit_tests/test_tokenizer.py \
-  --ignore tests/unit_tests/transformer \
   tests/unit_tests
-
-clear_previous_runs
-disable_pattern="not test_preprocess_data_bert"
-torchrun \
-  ${TORCHRUN_ARGS[@]} \
-  -m pytest -vxs \
-  ${PYTEST_COV_ARGS[@]} \
-  -k "${disable_pattern}" \
-  tests/unit_tests/data
-
-clear_previous_runs
-disable_pattern="not test_dp_sharding and "
-disable_pattern+="not test_memory_usage and "
-disable_pattern+="not test_remove_sharded_tensors"
-torchrun \
-  ${TORCHRUN_ARGS[@]} \
-  -m pytest -vxs \
-  ${PYTEST_COV_ARGS[@]} \
-  -k "${disable_pattern}" \
-  tests/unit_tests/dist_checkpointing
-
-clear_previous_runs
-torchrun \
-  ${TORCHRUN_ARGS[@]} \
-  -m pytest -vxs \
-  ${PYTEST_COV_ARGS[@]} \
-  --deselect "tests/unit_tests/models/test_bert_model.py::TestBertModelAttentionDimensions::test_transformer_engine_version_1_7_to_1_10_rng_error" \
-  --deselect "tests/unit_tests/models/test_t5_model.py::TestT5Model::test_forward_output_encoder_hidden_only" \
-  --deselect "tests/unit_tests/models/test_t5_model.py::TestT5Model::test_forward_with_encoder_hidden_states" \
-  --deselect "tests/unit_tests/models/test_t5_model.py::TestT5Model::test_post_process_forward" \
-  tests/unit_tests/models
-
-clear_previous_runs
-torchrun \
-  ${TORCHRUN_ARGS[@]} \
-  -m pytest -vxs \
-  ${PYTEST_COV_ARGS[@]} \
-  --deselect "tests/unit_tests/test_checkpointing.py::test_load_checkpoint[torch]" \
-  --deselect "tests/unit_tests/test_checkpointing.py::test_save_checkpoint[torch]" \
-  --deselect "tests/unit_tests/test_checkpointing.py::test_save_checkpoint[torch_dcp]" \
-  tests/unit_tests/test_checkpointing.py
-
-clear_previous_runs
-torchrun \
-  ${TORCHRUN_ARGS[@]} \
-  -m pytest -vxs \
-  ${PYTEST_COV_ARGS[@]} \
-  --deselect "tests/unit_tests/test_parallel_state.py::test_different_initialize_order_unconsistency[src_tp_pp3-2]" \
-  --deselect "tests/unit_tests/test_parallel_state.py::test_different_initialize_order_unconsistency[src_tp_pp4-2]" \
-  --deselect "tests/unit_tests/test_parallel_state.py::test_different_initialize_order_unconsistency[src_tp_pp5-2]" \
-  tests/unit_tests/test_parallel_state.py
-
-clear_previous_runs
-disable_pattern="not test_gpt2_tiktok_tokenizer"
-torchrun \
-  ${TORCHRUN_ARGS[@]} \
-  -m pytest -vxs \
-  ${PYTEST_COV_ARGS[@]} \
-  -k "${disable_pattern}" \
-  tests/unit_tests/test_tokenizer.py
-
-clear_previous_runs
-torchrun \
-  ${TORCHRUN_ARGS[@]} \
-  -m pytest -vxs \
-  ${PYTEST_COV_ARGS[@]} \
-  --deselect "tests/unit_tests/transformer/test_retro_attention.py::TestRetroAttention::test_gpu_forward" \
-  --deselect "tests/unit_tests/transformer/test_attention.py::TestParallelAttention::test_gpu_forward" \
-  --deselect "tests/unit_tests/transformer/test_attention.py::TestParallelAttention::test_fused_rope_gpu_forward" \
-  --deselect "tests/unit_tests/transformer/test_attention.py::TestParallelAttention::test_checkpointed_gpu_forward" \
-  tests/unit_tests/transformer
