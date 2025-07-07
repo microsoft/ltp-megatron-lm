@@ -274,7 +274,7 @@ class TestAuxLossFreeTop2Router:
         print("Updated bias after first forward pass:", updated_bias)
 
 
-class TestTop2Router:
+class TestLayerWiseTopkRouter:
     def setup_method(self, method):
         Utils.initialize_model_parallel(1, 1)
         _set_random_seed(seed_=123, data_parallel_random_init=False)
