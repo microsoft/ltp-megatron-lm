@@ -251,7 +251,7 @@ class TestLayerWiseTopkTransformerBlock:
             moe_router_topk=1,
         )
         self.parallel_transformer_block = TransformerBlock(
-            self.transformer_config, get_gpt_layer_with_transformer_engine_spec()
+            self.transformer_config, get_gpt_layer_with_transformer_engine_spec(num_experts=num_moe_experts)
         )
 
     def teardown_method(self, method):
