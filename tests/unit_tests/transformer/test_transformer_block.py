@@ -248,7 +248,7 @@ class TestLayerWiseTopkTransformerBlock:
             moe_router_score_function="sigmoid",  # Using sigmoid scoring
             moe_router_enable_expert_bias=True,  # Enable expert bias
             moe_router_bias_update_rate=0.1,  # Set bias update rate
-            moe_router_topk=2,
+            moe_router_topk=1,
         )
         self.parallel_transformer_block = TransformerBlock(
             self.transformer_config, get_gpt_layer_with_transformer_engine_spec()
