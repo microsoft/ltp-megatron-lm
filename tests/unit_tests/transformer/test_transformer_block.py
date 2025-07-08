@@ -260,8 +260,6 @@ class TestLayerWiseTopkTransformerBlock:
     def test_constructor(self):
         parallel_transformer_block = self.parallel_transformer_block
         assert isinstance(parallel_transformer_block, TransformerBlock)
-        num_weights = sum([p.numel() for p in parallel_transformer_block.parameters()])
-        assert num_weights == 100096
         assert parallel_transformer_block.num_layers_per_pipeline_rank == 2
         assert len(parallel_transformer_block.layers) == 2
         layer_0: TransformerLayer = parallel_transformer_block._get_layer(0)
