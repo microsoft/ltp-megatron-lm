@@ -235,8 +235,20 @@ class TestLayerWiseTopkTransformerBlock:
     def setup_method(self, method):
         Utils.initialize_model_parallel(1, 1)
         model_parallel_cuda_manual_seed(123)
+        num_moe_experts = 6
         self.transformer_config = TransformerConfig(
-            num_layers=2, moe_router_topk_layer_wise=[3,2], hidden_size=64, num_attention_heads=4, use_cpu_initialization=True
+            num_layers=2,
+            moe_router_topk_layer_wise=[3,2],
+            hidden_size=12,
+            num_attention_heads=4,
+            num_moe_experts=num_moe_experts,
+            use_cpu_initialization=True,
+            expert_model_parallel_size=1,
+            moe_router_load_balancing_type="none",  # No aux loss
+            moe_router_score_function="sigmoid",  # Using sigmoid scoring
+            moe_router_enable_expert_bias=True,  # Enable expert bias
+            moe_router_bias_update_rate=0.1,  # Set bias update rate
+            moe_router_topk=2,
         )
         self.parallel_transformer_block = TransformerBlock(
             self.transformer_config, get_gpt_layer_with_transformer_engine_spec()
