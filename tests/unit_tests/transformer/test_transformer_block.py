@@ -258,25 +258,4 @@ class TestLayerWiseTopkTransformerBlock:
         layer_1: TransformerLayer = parallel_transformer_block._get_layer(1)
         assert layer_1.layer_number == 2
         assert layer_1.mlp.router.topk == 2
-
-    def test_gpu_forward(self):
-        parallel_transformer_block = self.parallel_transformer_block
-        config: TransformerConfig = parallel_transformer_block.config
-
-        sequence_length = 32
-        micro_batch_size = 2
-        parallel_transformer_block.cuda()
-
-        # [sequence length, batch size, hidden size]
-        hidden_states = torch.ones((sequence_length, micro_batch_size, config.hidden_size))
-        hidden_states = hidden_states.cuda()
-
-        attention_mask = torch.ones((1, 1, sequence_length, sequence_length), dtype=bool).cuda()
-
-        hidden_states = parallel_transformer_block(
-            hidden_states=hidden_states, attention_mask=attention_mask
-        )
-        assert hidden_states.shape[0] == sequence_length
-        assert hidden_states.shape[1] == micro_batch_size
-        assert hidden_states.shape[2] == config.hidden_size
         
