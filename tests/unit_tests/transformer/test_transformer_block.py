@@ -230,7 +230,7 @@ class TestPipelineParallelTransformerBlock:
         parallel_state.set_virtual_pipeline_model_parallel_world_size(None)
 
 
-class TestLayerWiseTopkTransformerBlock:
+class TestLayerWiseTopkMoETransformerBlock:
 
     def setup_method(self, method):
         Utils.initialize_model_parallel(1, 1)
