@@ -258,4 +258,3 @@ class TestLayerWiseTopkTransformerBlock:
         layer_1: TransformerLayer = parallel_transformer_block._get_layer(1)
         assert layer_1.layer_number == 2
         assert layer_1.mlp.router.topk == 2
-        
