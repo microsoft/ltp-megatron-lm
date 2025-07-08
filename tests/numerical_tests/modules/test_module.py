@@ -41,22 +41,14 @@ class TestModule:
         self.model = model
         self.optimizer = optimizer
 
-    def get_save_tag(self, request):
+    def save_output(self, model_outputs, model_params, model_grads, request):
+        output_dict = {
+            'model_outputs': model_outputs,
+            'model_params': model_params,
+            'model_grads': model_grads,
+        }
         result_dir = request.config.getoption('--result-dir')
         file_tag = request.node.nodeid[request.node.nodeid.find(self.__class__.__name__):]
-        file_tag = file_tag.replace('::', '-').replace('[', '-').replace(']', '-')
+        file_tag = file_tag.replace('::', '-').replace('[', '-').replace(']', '')
         file_name = f'{file_tag}.pt'
-        return os.path.join(result_dir, file_name)
-
-    def run_test_loop(self, input_shape, input_dtype, steps, request):
-        for step in range(steps):
-            input_tensor = torch.randn(input_shape, dtype=input_dtype).cuda()
-            output_tensor, _ = self.model(input_tensor)
-            loss = output_tensor.mean()
-            loss.backward()
-            self.optimizer.step()
-        state_dict = {
-            'params': self.optimizer.get_parameters(),
-            'grads': self.optimizer.get_main_grads_for_grad_norm(),
-        }
-        torch.save(state_dict, self.get_save_tag(request))
+        torch.save(output_dict, os.path.join(result_dir, file_name))
