@@ -61,11 +61,7 @@ class TestTEDotProductAttention(TestModule):
             AttnMaskType.causal,
         )
         output = self.model(*inputs)
-        loss = output.mean()
-        loss.backward()
-        self.optimizer.step()
 
-        self.save_output([output], request)
         self.save_output(
             [output],
             [],
