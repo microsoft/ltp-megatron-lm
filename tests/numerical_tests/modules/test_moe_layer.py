@@ -60,7 +60,8 @@ class TestMoELayer(TestModule):
             'moe_permute_fusion': True,
         },
     ])
-    def test_moe_layer(self, inputs_kv, config_kv, request):
+    @pytest.mark.parametrize('steps', [10])
+    def test_moe_layer(self, inputs_kv, config_kv, steps, request):
         config = TransformerConfig(**config_kv)
 
         if config.bf16:
@@ -93,7 +94,7 @@ class TestMoELayer(TestModule):
         )
         model, optimizer = self.setup_model_and_optimizer(config, model)
 
-        for step in range(10):
+        for step in range(steps):
             inputs = (
                 torch.randn(
                     (

@@ -39,7 +39,8 @@ class TestSelfAttention(TestModule):
             'hidden_dropout': 0.0,
         },
     ])
-    def test_te_dot_product_attention(self, inputs_kv, config_kv, request):
+    @pytest.mark.parametrize('steps', [10])
+    def test_te_dot_product_attention(self, inputs_kv, config_kv, steps, request):
         config = TransformerConfig(**config_kv)
 
         if config.bf16:
@@ -65,7 +66,7 @@ class TestSelfAttention(TestModule):
         )
         model, optimizer = self.setup_model_and_optimizer(config, model)
 
-        for step in range(10):
+        for step in range(steps):
             inputs = (
                 torch.randn(
                     (
