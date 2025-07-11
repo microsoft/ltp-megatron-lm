@@ -14,14 +14,20 @@ class TestModule:
     """
 
     def setup_method(self, method):
-        Utils.initialize_distributed()
+        self.setup_distributed()
         self.setup_parallelism()
-        seed = 42
-        torch.manual_seed(seed)
-        model_parallel_cuda_manual_seed(seed)
+        self.setup_random_seed()
+
+    def setup_distributed(self):
+        Utils.initialize_distributed()
 
     def setup_parallelism(self):
         Utils.initialize_model_parallel()
+
+    def setup_random_seed(self):
+        seed = 42
+        torch.manual_seed(seed)
+        model_parallel_cuda_manual_seed(seed)
 
     def teardown_method(self, method):
         Utils.destroy_model_parallel()
@@ -42,8 +48,9 @@ class TestModule:
         optimizer = get_megatron_optimizer(optimizer_config, [model])
         return model, optimizer
 
-    def save_output(self, outputs, params, grads, request):
+    def save_output(self, inputs, outputs, params, grads, step, request):
         output_dict = {
+            'inputs': inputs,
             'outputs': outputs,
             'params': params,
             'grads': grads,
@@ -52,5 +59,5 @@ class TestModule:
         file_tag = request.node.nodeid[request.node.nodeid.find(self.__class__.__name__):]
         file_tag = file_tag.replace('::', '-').replace('[', '-').replace(']', '')
         rank = torch.distributed.get_rank()
-        file_name = f'{file_tag}-rank-{rank}.pt'
+        file_name = f'{file_tag}-rank-{rank}-step-{step}.pt'
         torch.save(output_dict, os.path.join(result_dir, file_name))

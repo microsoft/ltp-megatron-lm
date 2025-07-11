@@ -1,7 +1,6 @@
 import pytest
 import torch
 
-from types import SimpleNamespace
 from megatron.core.extensions.transformer_engine import (
     TEDotProductAttention,
     TELayerNormColumnParallelLinear,
@@ -13,7 +12,6 @@ from megatron.core.transformer.attention import SelfAttention, SelfAttentionSubm
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
-from megatron.training.global_vars import set_args
 from tests.numerical_tests.modules.test_module import TestModule
 
 
@@ -67,34 +65,37 @@ class TestSelfAttention(TestModule):
         )
         model, optimizer = self.setup_model_and_optimizer(config, model)
 
-        inputs = (
-            torch.randn(
-                (
-                    inputs_kv['seq_length'],
-                    inputs_kv['micro_batch_size'],
-                    config.hidden_size
-                ),
-                dtype=dtype
-            ).cuda(),
-            torch.triu(
-                torch.ones(
+        for step in range(10):
+            inputs = (
+                torch.randn(
                     (
                         inputs_kv['seq_length'],
-                        inputs_kv['seq_length']
+                        inputs_kv['micro_batch_size'],
+                        config.hidden_size
                     ),
-                    dtype=torch.bool
-                ), diagonal=1
-            ).unsqueeze(0).unsqueeze(0).cuda(),
-        )
-        output, bias = model(*inputs)
-        merged_output = output + bias
-        loss = merged_output.mean()
-        loss.backward()
-        optimizer.step()
+                    dtype=dtype
+                ).cuda(),
+                torch.triu(
+                    torch.ones(
+                        (
+                            inputs_kv['seq_length'],
+                            inputs_kv['seq_length']
+                        ),
+                        dtype=torch.bool
+                    ), diagonal=1
+                ).unsqueeze(0).unsqueeze(0).cuda(),
+            )
+            output, bias = model(*inputs)
+            merged_output = output + bias
+            loss = merged_output.mean()
+            loss.backward()
+            optimizer.step()
 
-        self.save_output(
-            [merged_output],
-            optimizer.get_parameters(),
-            optimizer.get_main_grads_for_grad_norm(),
-            request
-        )
+            self.save_output(
+                [*inputs],
+                [merged_output],
+                optimizer.get_parameters(),
+                optimizer.get_main_grads_for_grad_norm(),
+                step,
+                request,
+            )
