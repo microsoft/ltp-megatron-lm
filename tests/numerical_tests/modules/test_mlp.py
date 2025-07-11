@@ -1,15 +1,16 @@
 import pytest
 import torch
 
-from megatron.core.models.common.embeddings.language_model_embedding import LanguageModelEmbedding
+from megatron.core.extensions.transformer_engine import TELayerNormColumnParallelLinear, TERowParallelLinear
 from megatron.core.transformer import TransformerConfig
+from megatron.core.transformer.mlp import MLP, MLPSubmodules
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from tests.numerical_tests.modules.test_module import TestModule
 
 
-class TestLanguageModelEmbedding(TestModule):
+class TestMLP(TestModule):
     """
-    Test LanguageModelEmbedding
+    Test MLP
     """
 
     @pytest.mark.parametrize('inputs_kv', [
@@ -24,41 +25,45 @@ class TestLanguageModelEmbedding(TestModule):
             'num_layers': 1,
             'hidden_size': 5120,
             'num_attention_heads': 1,
+            'add_bias_linear': False,
+            'gated_linear_unit': torch.nn.functional.silu,
         },
     ])
-    @pytest.mark.parametrize('embedding_kv', [
-        {
-            'vocab_size': 200064,
-            'position_embedding_type': 'rope',
-        }
-    ])
     @pytest.mark.parametrize('steps', [10])
-    def test_language_model_embedding(self, inputs_kv, config_kv, embedding_kv, steps, request):
+    def test_mlp(self, inputs_kv, config_kv, steps, request):
         config = TransformerConfig(**config_kv)
 
+        if config.bf16:
+            dtype = torch.bfloat16
+        else:
+            dtype = torch.float32
+
         module_spec = ModuleSpec(
-            module=LanguageModelEmbedding,
+            module=MLP,
+            submodules=MLPSubmodules(
+                linear_fc1=TELayerNormColumnParallelLinear,
+                linear_fc2=TERowParallelLinear,
+            ),
         )
+
         model = build_module(
             module_spec,
             config=config,
-            vocab_size=embedding_kv['vocab_size'],
-            max_sequence_length=inputs_kv['seq_length'],
-            position_embedding_type=embedding_kv['position_embedding_type'],
         )
         model, optimizer = self.setup_model_and_optimizer(config, model)
 
         for step in range(steps):
             inputs = (
-                torch.randint(
-                    low=0,
-                    high=embedding_kv['vocab_size'],
-                    size=(inputs_kv['seq_length'], inputs_kv['micro_batch_size']),
-                    dtype=torch.int64
+                torch.randn(
+                    (
+                        inputs_kv['seq_length'],
+                        inputs_kv['micro_batch_size'],
+                        config.hidden_size
+                    ),
+                    dtype=dtype
                 ).cuda(),
-                None,
             )
-            output = model(*inputs)
+            output, _ = model(*inputs)
             loss = output.mean()
             loss.backward()
             optimizer.step()
