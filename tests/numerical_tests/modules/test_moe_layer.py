@@ -90,7 +90,6 @@ class TestMoELayer(TestModule):
         model = build_module(
             module_spec,
             config=config,
-            layer_number=0,
         )
         model, optimizer = self.setup_model_and_optimizer(config, model)
 
