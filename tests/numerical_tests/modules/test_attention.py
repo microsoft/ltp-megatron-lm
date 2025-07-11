@@ -40,7 +40,7 @@ class TestSelfAttention(TestModule):
         },
     ])
     @pytest.mark.parametrize('steps', [10])
-    def test_te_dot_product_attention(self, inputs_kv, config_kv, steps, request):
+    def test_self_attention(self, inputs_kv, config_kv, steps, request):
         config = TransformerConfig(**config_kv)
 
         if config.bf16:
