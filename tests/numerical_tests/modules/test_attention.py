@@ -35,8 +35,6 @@ class TestSelfAttention(TestModule):
             'num_query_groups': 8,
             'kv_channels': 128,
             'qk_layernorm': True,
-            'attention_dropout': 0.0,
-            'hidden_dropout': 0.0,
         },
     ])
     @pytest.mark.parametrize('steps', [10])
