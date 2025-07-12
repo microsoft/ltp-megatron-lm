@@ -2,10 +2,7 @@ import pytest
 import torch
 
 from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
-from megatron.core.models.common.embeddings.rope_utils import apply_rotary_pos_emb
-from megatron.core.models.common.embeddings.rotary_pos_embedding import RotaryEmbedding
 from megatron.core.transformer import TransformerConfig
-from megatron.core.transformer.module import Float16Module
 from megatron.core.transformer.spec_utils import build_module
 from tests.numerical_tests.modules.test_module import TestModule
 
@@ -71,7 +68,7 @@ class TestBDA(TestModule):
                 requires_grad=True,
             )
             output = model(training=True, fused=config.bias_dropout_fusion)(
-                (mlp_input, mlp_bias), residual, config.hidden_dropout
+                (mlp_input.cuda(), mlp_bias.cuda()), residual, config.hidden_dropout
             )
             loss = output.mean()
             loss.backward()
