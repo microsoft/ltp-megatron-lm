@@ -68,7 +68,7 @@ class TestBDA(TestModule):
                 requires_grad=True,
             )
             output = model(training=True, fused=config.bias_dropout_fusion)(
-                (mlp_input.cuda(), mlp_bias.cuda()), residual, config.hidden_dropout
+                (mlp_input.cuda(), mlp_bias.cuda()), residual.cuda(), config.hidden_dropout
             )
             loss = output.mean()
             loss.backward()
