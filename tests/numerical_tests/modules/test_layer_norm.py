@@ -20,6 +20,7 @@ class TestLayerNorm(TestModule):
     ])
     @pytest.mark.parametrize('config_kv', [
         {
+            'use_cpu_initialization': True,
             'bf16': True,
             'num_layers': 1,
             'hidden_size': 5120,
@@ -59,7 +60,6 @@ class TestLayerNorm(TestModule):
             output = model(*inputs)
             loss = output.mean()
             loss.backward()
-            optimizer.step()
 
             self.save_output(
                 [*inputs],
@@ -69,3 +69,5 @@ class TestLayerNorm(TestModule):
                 step,
                 request,
             )
+
+            optimizer.step()

@@ -21,6 +21,7 @@ class TestMLP(TestModule):
     ])
     @pytest.mark.parametrize('config_kv', [
         {
+            'use_cpu_initialization': True,
             'bf16': True,
             'num_layers': 1,
             'hidden_size': 5120,
@@ -66,7 +67,6 @@ class TestMLP(TestModule):
             output, _ = model(*inputs)
             loss = output.mean()
             loss.backward()
-            optimizer.step()
 
             self.save_output(
                 [*inputs],
@@ -76,3 +76,5 @@ class TestMLP(TestModule):
                 step,
                 request,
             )
+
+            optimizer.step()

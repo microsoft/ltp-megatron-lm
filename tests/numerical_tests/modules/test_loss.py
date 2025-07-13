@@ -18,6 +18,7 @@ class TestLanguageModuleComputeLanguageModelLoss(TestModule):
     ])
     @pytest.mark.parametrize('config_kv', [
         {
+            'use_cpu_initialization': True,
             'bf16': True,
             'num_layers': 1,
             'num_attention_heads': 1,
