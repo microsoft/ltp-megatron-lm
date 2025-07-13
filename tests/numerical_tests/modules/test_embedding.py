@@ -64,7 +64,7 @@ class TestLanguageModelEmbedding(TestModule):
             optimizer.step()
 
             self.save_output(
-                [*inputs],
+                [inputs[0]],
                 [output],
                 optimizer.get_parameters(),
                 optimizer.get_main_grads_for_grad_norm(),
