@@ -31,40 +31,44 @@ def compare_stats(stats_ref, stats_test):
         else:
             max_mean_err = [
                 relative_error_max(
-                    ref['mean'].view(-1).float(),
-                    test['mean'].view(-1).float(),
+                    ref['mean'].view(-1).double(),
+                    test['mean'].view(-1).double(),
                 )
                 for ref, test in zip(list_ref, list_test)
             ]
             max_std_ratio = [
                 ratio_max(
-                    ref['std'].view(-1).float(),
-                    test['std'].view(-1).float(),
+                    ref['std'].view(-1).double(),
+                    test['std'].view(-1).double(),
                 )
                 for ref, test in zip(list_ref, list_test)
             ]
             mean_cos_similarity = [
                 torch.nn.functional.cosine_similarity(
-                    ref['mean'].view(-1).float(),
-                    test['mean'].view(-1).float(),
+                    ref['mean'].view(-1).double(),
+                    test['mean'].view(-1).double(),
                     dim=0
                 ).item()
                 for ref, test in zip(list_ref, list_test)
             ]
             std_cos_similarity = [
                 torch.nn.functional.cosine_similarity(
-                    ref['std'].view(-1).float(),
-                    test['std'].view(-1).float(),
+                    ref['std'].view(-1).double(),
+                    test['std'].view(-1).double(),
                     dim=0
                 ).item()
                 for ref, test in zip(list_ref, list_test)
             ]
+            ref_max_std = [torch.max(ref['std']).item() for ref in list_ref]
+            test_max_std = [torch.max(test['std']).item() for test in list_test]
 
         result[key] = {
             'max_mean_err': max_mean_err,
             'max_std_ratio': max_std_ratio,
             'mean_cos_similarity': mean_cos_similarity,
             'std_cos_similarity': std_cos_similarity,
+            'ref_max_std': ref_max_std,
+            'test_max_std': test_max_std,
         }
 
     return result
