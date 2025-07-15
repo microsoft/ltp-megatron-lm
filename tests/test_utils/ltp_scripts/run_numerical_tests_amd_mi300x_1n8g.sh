@@ -35,37 +35,39 @@ TORCHRUN_ARGS=(
 )
 
 clear_previous_runs() {
-ps axu | grep '[p]ython' | awk '{print $2}' | xargs -r -n 1 kill -9 2>/dev/null || true
-sleep 10
+  ps axu | grep '[p]ython' | awk '{print $2}' | xargs -r -n 1 kill -9 2>/dev/null || true
+  sleep 10
 }
 
 result_dir="./numerical_test_results"
+rm -rf ${result_dir}
 
 run_numerical_tests() {
-  rm -rf ${result_dir}
   for x in {0..19}
-    do
-    mkdir -p ${result_dir}/${1}/${x}
+  do
+    mkdir -p ${result_dir}/test/${1}/${x}
     clear_previous_runs
     torchrun \
       ${TORCHRUN_ARGS[@]} \
       -m pytest -vxs \
       tests/numerical_tests/modules/test_${1}.py \
-      --result-dir ${result_dir}/${1}/${x}
+      --result-dir ${result_dir}/test/${1}/${x}
   done
-  file_names=$(find ${result_dir} -type f -printf "%f\n" | sort | uniq)
+  file_names=$(find ${result_dir}/test/${1} -type f -printf "%f\n" | sort | uniq)
+  mkdir -p ${result_dir}/calc/${1}
   for name in ${file_names}
   do
-    rm -rf calc_input_list.txt
     for x in {0..19}
     do
-      echo "${result_dir}/${1}/${x}/${name}" >> calc_input_list.txt
+      echo "${result_dir}/test/${1}/${x}/${name}" >> ${result_dir}/calc/input_list.txt
     done
     python \
-    tests/numerical_tests/utils/calc_module_mean_and_variance.py \
-      --input-list calc_input_list.txt \
-      --output-file ${result_dir}/${1}/${name}.mean_and_std.pt
+      tests/numerical_tests/utils/calc_module_mean_and_variance.py \
+      --input-list ${result_dir}/calc/input_list.txt \
+      --output-file ${result_dir}/calc/${1}/${name}.mean_and_std.pt
+    rm ${result_dir}/calc/input_list.txt
   done
+  rm -rf ${result_dir}/test
 }
 
 run_numerical_tests attention
