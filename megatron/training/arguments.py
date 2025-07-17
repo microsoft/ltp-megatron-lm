@@ -1338,6 +1338,8 @@ def _add_straggler_detector_args(parser):
                        help='If set, tracks and logs straggler per GPU.')
     group.add_argument('--disable-straggler-on-startup', action='store_true',
                        help='If set, StragglerDetector is disabled on startup.')
+    group.add_argument('--straggler-ctrlr-host', type=str, default='127.0.0.1',
+                       help='Host name to toggle StragglerDetector on/off at runtime')
     group.add_argument('--straggler-ctrlr-port', type=int, default=65535,
                        help='Port number to toggle StragglerDetector on/off at runtime')
     group.add_argument('--straggler-minmax-count', type=int, default=1,
