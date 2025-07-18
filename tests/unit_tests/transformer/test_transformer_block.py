@@ -289,4 +289,3 @@ class TestLayerWiseTopkMoETransformerBlock:
         assert hidden_states.shape[0] == sequence_length
         assert hidden_states.shape[1] == micro_batch_size
         assert hidden_states.shape[2] == config.hidden_size
-        
