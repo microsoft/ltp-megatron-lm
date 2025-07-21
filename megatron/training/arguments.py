@@ -834,6 +834,12 @@ def validate_args(args, defaults={}):
         assert args.mrope_section is not None, \
             '--mrope-section should be set when using --position-embedding-type mrope.'
 
+    # MoE per-layer topk check
+    if args.moe_router_topk_layer_wise is not None:
+        # moe-router-topk-layer-wise should be a list
+        assert isinstance(args.moe_router_topk_layer_wise, list), \
+            "--moe-router-topk-layer-wise should be a list of integers."
+
     # MoE Spec check
     if args.num_experts == 0:
         args.num_experts = None
@@ -2573,6 +2579,8 @@ def _add_moe_args(parser):
                        help='Score function for computing MoE aux loss. Can be "softmax" or "sigmoid".')
     group.add_argument('--moe-router-topk', type=int, default=2,
                        help='Number of experts to route to for each token. The default is 2.')
+    group.add_argument('--moe-router-topk-layer-wise', type=moe_freq_type, default=None,
+                       help='Layer-wise number of experts to route to for each token.')
     group.add_argument('--moe-router-pre-softmax', action='store_true',
                        help='Enable pre-softmax routing for MoE, which means softmax is before the top-k selection. By default, softmax is done after top-k.')
     group.add_argument('--moe-router-num-groups', type=int, default=None,
