@@ -1932,6 +1932,7 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
         stimer.configure(world, rank,
                 mmcnt = mmcnt,
                 enabled = not args.disable_straggler_on_startup,
+                host = args.straggler_ctrlr_host,
                 port = args.straggler_ctrlr_port)
     num_floating_point_operations_since_last_log_event = 0.0
 
