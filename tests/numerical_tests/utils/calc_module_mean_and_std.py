@@ -23,16 +23,12 @@ class OnlineTensorStats:
         delta2 = x - self.mean
         self.M2 += delta * delta2
 
-    def get_final_result(self):
+    def get_mean_std(self):
         if self.n < 2:
             std = torch.zeros_like(self.mean)
         else:
             std = torch.sqrt(self.M2 / (self.n - 1))
-        return {
-            'mean': self.mean,
-            'std': std,
-            'count': self.n
-        }
+        return self.mean, std
 
 def process_file(path, stats_dict):
     data = torch.load(path, map_location='cpu')
@@ -55,12 +51,24 @@ def main(args):
     for path in file_paths:
         process_file(path, stats_dict)
 
-    final_result = {key: [s.get_final_result() for s in stats] for key, stats in stats_dict.items()}
-    torch.save(final_result, args.output_file)
+    mean_result = {}
+    std_result = {}
+
+    for key, stats in stats_dict.items():
+        mean_result[key] = []
+        std_result[key] = []
+        for s in stats:
+            mean, std = s.get_mean_std()
+            mean_result[key].append(mean)
+            std_result[key].append(std)
+
+    torch.save(mean_result, args.output_mean_file)
+    torch.save(std_result, args.output_std_file)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Streamed tensor mean/std computation from .pt files.")
     parser.add_argument('--input-list', type=str, required=True, help='Text file containing list of .pt file paths')
-    parser.add_argument('--output-file', type=str, required=True, help='Output .pt file to save stats')
+    parser.add_argument('--output-mean-file', type=str, required=True, help='Output .pt file to save mean values')
+    parser.add_argument('--output-std-file', type=str, required=True, help='Output .pt file to save std values')
     args = parser.parse_args()
     main(args)
