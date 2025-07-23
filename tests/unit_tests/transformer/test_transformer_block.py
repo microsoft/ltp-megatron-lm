@@ -228,3 +228,64 @@ class TestPipelineParallelTransformerBlock:
             ), f"total build layers {total_build_layers} should be equal to num_layers {num_layers}"
         parallel_state.set_pipeline_model_parallel_world_size(None)
         parallel_state.set_virtual_pipeline_model_parallel_world_size(None)
+
+
+class TestLayerWiseTopkMoETransformerBlock:
+
+    def setup_method(self, method):
+        Utils.initialize_model_parallel(1, 1)
+        model_parallel_cuda_manual_seed(123)
+        num_moe_experts = 6
+        self.transformer_config = TransformerConfig(
+            num_layers=2,
+            moe_router_topk_layer_wise=[3,2],
+            hidden_size=12,
+            num_attention_heads=4,
+            num_moe_experts=num_moe_experts,
+            use_cpu_initialization=True,
+            expert_model_parallel_size=1,
+            moe_router_load_balancing_type="none",  # No aux loss
+            moe_router_score_function="sigmoid",  # Using sigmoid scoring
+            moe_router_enable_expert_bias=True,  # Enable expert bias
+            moe_router_bias_update_rate=0.1,  # Set bias update rate
+            moe_router_topk=1,
+        )
+        self.parallel_transformer_block = TransformerBlock(
+            self.transformer_config, get_gpt_layer_with_transformer_engine_spec(num_experts=num_moe_experts)
+        )
+
+    def teardown_method(self, method):
+        Utils.destroy_model_parallel()
+
+    def test_constructor(self):
+        parallel_transformer_block = self.parallel_transformer_block
+        assert isinstance(parallel_transformer_block, TransformerBlock)
+        assert parallel_transformer_block.num_layers_per_pipeline_rank == 2
+        assert len(parallel_transformer_block.layers) == 2
+        layer_0: TransformerLayer = parallel_transformer_block._get_layer(0)
+        assert layer_0.layer_number == 1
+        assert layer_0.mlp.router.topk == 3
+        layer_1: TransformerLayer = parallel_transformer_block._get_layer(1)
+        assert layer_1.layer_number == 2
+        assert layer_1.mlp.router.topk == 2
+
+    def test_gpu_forward(self):
+        parallel_transformer_block = self.parallel_transformer_block
+        config: TransformerConfig = parallel_transformer_block.config
+
+        sequence_length = 32
+        micro_batch_size = 2
+        parallel_transformer_block.cuda()
+
+        # [sequence length, batch size, hidden size]
+        hidden_states = torch.ones((sequence_length, micro_batch_size, config.hidden_size))
+        hidden_states = hidden_states.cuda()
+
+        attention_mask = torch.ones((1, 1, sequence_length, sequence_length), dtype=bool).cuda()
+
+        hidden_states = parallel_transformer_block(
+            hidden_states=hidden_states, attention_mask=attention_mask
+        )
+        assert hidden_states.shape[0] == sequence_length
+        assert hidden_states.shape[1] == micro_batch_size
+        assert hidden_states.shape[2] == config.hidden_size

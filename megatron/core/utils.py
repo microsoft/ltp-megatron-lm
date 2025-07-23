@@ -1047,6 +1047,7 @@ class StragglerDetector:
         world (int): world size
         rank (int): rank for this instance
         mmcnt (int): number of ranks to report
+        host (str): control host
         port (int): control port
         amp (float): amplification factor for TFLOPs, default 3.0
         toggle (bool): whether to start/stop detector collection
@@ -1097,6 +1098,7 @@ class StragglerDetector:
         self.world: int = 0
         self.rank: int = 0
         self.mmcnt: int = 1
+        self.host: str = '127.0.0.1'
         self.port: int = 0
         self.amp: float = 3.0
         self.toggle: bool = False
@@ -1120,6 +1122,7 @@ class StragglerDetector:
         rank: int,
         mmcnt: int = 1,
         amp: float = 3.0,
+        host: str = '127.0.0.1',
         port: int = 65535,
         prefill: int = 1024,
         enabled: bool = False,
@@ -1142,6 +1145,7 @@ class StragglerDetector:
                                    Defaults to 1.
             amp (float, optional): Set to 3.0 if we only use timers in fwd pass.
                                    Defaults to 3.0.
+            host (str, optional): Control host, useful only for rank-0. Defaults to 127.0.0.1.
             port (int, optional): Control port, useful only for rank-0. Defaults to 65535.
             prefill (int, optional): How many Events to pre-populate. Defaults to 1024.
             enabled (bool, optional): Whether or not collection is enabled on startup.
@@ -1162,6 +1166,7 @@ class StragglerDetector:
             self.rank = rank
             self.mmcnt = mmcnt if mmcnt > 1 else 1
             self.amp = amp
+            self.host = host
             self.port = port
             self.toggle = False
             self.bdata = False
@@ -1419,7 +1424,7 @@ class StragglerDetector:
     def _handler(self) -> None:
         """Thread function for the controller.
 
-        It is a tcp-server that listens on a port. Uses HTTP protocol.
+        It is a tcp-server that listens on a (host, port) tuple. Uses HTTP protocol.
         If connected to it using curl, it indicates a toggle of the
         collection state. The actual toggling happens at the end of
         calling report() when _check_toggle() is called.
@@ -1429,7 +1434,7 @@ class StragglerDetector:
         if self.rank == 0:
             state = "OFF" if self._off else "ON"
             logger.info(
-                f"Controller ready to recv commands on port {self.port}. Current state {state}"
+                f"Controller ready to recv commands on host {self.host} port {self.port}. Current state {state}"
             )
             while True and self.sock is not None:
                 try:
@@ -1454,7 +1459,7 @@ class StragglerDetector:
         """
         try:
             if self.rank == 0:
-                neth = "0.0.0.0"
+                neth = self.host
                 netp = self.port
                 self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
