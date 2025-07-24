@@ -39,11 +39,11 @@ clear_previous_runs() {
   sleep 10
 }
 
-result_dir="./numerical_test_results"
+result_dir="./numerical_test_results/amd_mi300x"
 rm -rf ${result_dir}
 
 run_numerical_tests() {
-  # Run module tests
+  # Get raw module test results
   for x in {0..19}
   do
     mkdir -p ${result_dir}/module_test/${1}/${x}
@@ -54,24 +54,24 @@ run_numerical_tests() {
       tests/numerical_tests/modules/test_${1}.py \
       --result-dir ${result_dir}/module_test/${1}/${x}
   done
-  # Calculate per-module mean and std
+  # Calculate module mean and std
   file_names=$(find ${result_dir}/module_test/${1} -type f -printf "%f\n" | sort | uniq)
-  mkdir -p ${result_dir}/module_calc_mean_and_std/${1}
+  mkdir -p ${result_dir}/module_mean_and_std/${1}
   for name in ${file_names}
   do
     for x in {0..19}
     do
-      echo "${result_dir}/module_test/${1}/${x}/${name}" >> ${result_dir}/module_calc_mean_and_std/input_list.txt
+      echo "${result_dir}/module_test/${1}/${x}/${name}" >> ${result_dir}/module_mean_and_std/input_list.txt
     done
     python \
-      tests/numerical_tests/utils/module_calc_mean_and_std.py \
-      --input-list ${result_dir}/module_calc_mean_and_std/input_list.txt \
-      --output-mean-file ${result_dir}/module_calc_mean_and_std/${1}/${name}.mean.pt \
-      --output-std-file ${result_dir}/module_calc_mean_and_std/${1}/${name}.std.pt
-    rm ${result_dir}/module_calc_mean_and_std/input_list.txt
+      tests/numerical_tests/utils/module_mean_and_std.py \
+      --input-list ${result_dir}/module_mean_and_std/input_list.txt \
+      --output-mean-file ${result_dir}/module_mean_and_std/${1}/${name}.mean.pt \
+      --output-std-file ${result_dir}/module_mean_and_std/${1}/${name}.std.pt
+    rm ${result_dir}/module_mean_and_std/input_list.txt
   done
   # Calculate intra-module similarity
-  mkdir -p ${result_dir}/module_calc_similarity/${1}
+  mkdir -p ${result_dir}/module_similarity/${1}
   for name in ${file_names}
   do
     for x in {0..19}
@@ -80,14 +80,15 @@ run_numerical_tests() {
       do
         if [ "$x" -lt "$y" ]; then
           python \
-            tests/numerical_tests/utils/module_calc_similarity.py \
+            tests/numerical_tests/utils/module_similarity.py \
             --stats-ref ${result_dir}/module_test/${1}/${x}/${name} \
             --stats-test ${result_dir}/module_test/${1}/${y}/${name} \
-            --output-file ${result_dir}/module_calc_similarity/${name}.${x}-${y}.json
+            --output-file ${result_dir}/module_similarity/${1}/${name}.${x}-${y}.json
         fi
       done
     done
   done
+  # Remove raw module test results
   rm -rf ${result_dir}/module_test
 }
 
