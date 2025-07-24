@@ -25,6 +25,8 @@ class TestLanguageModelEmbedding(TestModule):
             'num_layers': 1,
             'hidden_size': 5120,
             'num_attention_heads': 1,
+            'hidden_dropout': 0.0,
+            'attention_dropout': 0.0,
         },
     ])
     @pytest.mark.parametrize('embedding_kv', [

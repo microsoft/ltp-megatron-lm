@@ -35,6 +35,7 @@ class TestSelfAttention(TestModule):
             'num_attention_heads': 64,
             'num_query_groups': 8,
             'kv_channels': 128,
+            'attention_dropout': 0.0,
             'qk_layernorm': True,
         },
     ])

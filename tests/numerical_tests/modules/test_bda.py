@@ -24,6 +24,8 @@ class TestBDA(TestModule):
             'num_layers': 1,
             'num_attention_heads': 64,
             'kv_channels': 128,
+            'hidden_dropout': 0.0,
+            'attention_dropout': 0.0,
         },
     ])
     @pytest.mark.parametrize('steps', [10])
