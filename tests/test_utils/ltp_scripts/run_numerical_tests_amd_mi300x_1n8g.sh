@@ -43,31 +43,52 @@ result_dir="./numerical_test_results"
 rm -rf ${result_dir}
 
 run_numerical_tests() {
+  # Run module tests
   for x in {0..19}
   do
-    mkdir -p ${result_dir}/test/${1}/${x}
+    mkdir -p ${result_dir}/module_test/${1}/${x}
     clear_previous_runs
     torchrun \
       ${TORCHRUN_ARGS[@]} \
       -m pytest -vxs \
       tests/numerical_tests/modules/test_${1}.py \
-      --result-dir ${result_dir}/test/${1}/${x}
+      --result-dir ${result_dir}/module_test/${1}/${x}
   done
-  file_names=$(find ${result_dir}/test/${1} -type f -printf "%f\n" | sort | uniq)
-  mkdir -p ${result_dir}/calc/${1}
+  # Calculate per-module mean and std
+  file_names=$(find ${result_dir}/module_test/${1} -type f -printf "%f\n" | sort | uniq)
+  mkdir -p ${result_dir}/module_calc_mean_and_std/${1}
   for name in ${file_names}
   do
     for x in {0..19}
     do
-      echo "${result_dir}/test/${1}/${x}/${name}" >> ${result_dir}/calc/input_list.txt
+      echo "${result_dir}/module_test/${1}/${x}/${name}" >> ${result_dir}/module_calc_mean_and_std/input_list.txt
     done
     python \
-      tests/numerical_tests/utils/calc_module_mean_and_variance.py \
-      --input-list ${result_dir}/calc/input_list.txt \
-      --output-file ${result_dir}/calc/${1}/${name}.mean_and_std.pt
-    rm ${result_dir}/calc/input_list.txt
+      tests/numerical_tests/utils/module_calc_mean_and_std.py \
+      --input-list ${result_dir}/module_calc_mean_and_std/input_list.txt \
+      --output-mean-file ${result_dir}/module_calc_mean_and_std/${1}/${name}.mean.pt \
+      --output-std-file ${result_dir}/module_calc_mean_and_std/${1}/${name}.std.pt
+    rm ${result_dir}/module_calc_mean_and_std/input_list.txt
   done
-  rm -rf ${result_dir}/test
+  # Calculate intra-module similarity
+  mkdir -p ${result_dir}/module_calc_similarity/${1}
+  for name in ${file_names}
+  do
+    for x in {0..19}
+    do
+      for y in {0..19}
+      do
+        if [ "$x" -lt "$y" ]; then
+          python \
+            tests/numerical_tests/utils/module_calc_similarity.py \
+            --stats-ref ${result_dir}/module_test/${1}/${x}/${name} \
+            --stats-test ${result_dir}/module_test/${1}/${y}/${name} \
+            --output-file ${result_dir}/module_calc_similarity/${name}.${x}-${y}.json
+        fi
+      done
+    done
+  done
+  rm -rf ${result_dir}/module_test
 }
 
 run_numerical_tests attention
