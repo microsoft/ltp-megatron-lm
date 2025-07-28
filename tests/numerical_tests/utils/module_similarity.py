@@ -37,7 +37,7 @@ def main(args):
         json.dump(comparison_result, f, indent=2)
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Compare two tensor stats .pt files and compute max relative errors.")
+    parser = argparse.ArgumentParser(description="Compare two tensor stats .pt files and compute cosine similarity.")
     parser.add_argument('--stats-a', type=str, required=True, help='Path to stats .pt file from setting A')
     parser.add_argument('--stats-b', type=str, required=True, help='Path to stats .pt file from setting B')
     parser.add_argument('--output-file', type=str, required=True, help='Path to save the cosine similarity result (JSON)')
