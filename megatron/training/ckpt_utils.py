@@ -44,7 +44,7 @@ class CkptUploadQueue:
         self.blob_path = args.ckpt_upload_blob_path.rstrip("/")
         self.blob_sas_path = args.ckpt_upload_blob_sas_path
         self.blob_concurrency = args.ckpt_upload_blob_concurrency
-        self.log_dir = args.ckpt_upload_log_dir
+        self.log_dir = os.path.expandvars(args.ckpt_upload_log_dir)
 
         self.upload_tasks = queue.Queue()
         self._running = True
