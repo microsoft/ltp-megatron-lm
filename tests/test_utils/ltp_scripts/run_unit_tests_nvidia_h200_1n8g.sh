@@ -3,7 +3,7 @@ set -e
 pip install -r requirements_ci.txt
 CAUSAL_CONV1D_FORCE_BUILD=TRUE pip install git+https://github.com/Dao-AILab/causal-conv1d.git@v1.2.2.post1
 pip install git+https://github.com/fanshiqing/grouped_gemm@v1.1.2
-MAMBA_FORCE_BUILD=TRUE pip install git+https://github.com/state-spaces/mamba.git@v2.2.0 triton==3.3.1
+MAMBA_FORCE_BUILD=TRUE pip install git+https://github.com/state-spaces/mamba.git@v2.2.0
 apt purge -y python3-blinker
 pip install flask flask-restful tiktoken tensorstore
 
