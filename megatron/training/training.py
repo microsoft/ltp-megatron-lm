@@ -1438,6 +1438,8 @@ def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_r
                              iteration)
             wandb_writer.log({'tokens vs steps': args.consumed_train_samples * args.seq_length},
                              iteration)
+            wandb_writer.log({'flops vs steps': args.num_floating_point_operations_so_far},
+                             iteration)
         writer.add_scalar('learning-rate', learning_rate, iteration)
         writer.add_scalar('learning-rate vs samples', learning_rate,
                             args.consumed_train_samples)
