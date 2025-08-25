@@ -1350,7 +1350,7 @@ def train_step(forward_step_func, data_iterator,
 
 def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_rate, iteration,
                  loss_scale, report_memory_flag, skipped_iter,
-                 grad_norm, params_norm, num_zeros_in_grad, grad_norm_per_layer=None):
+                 grad_norm, params_norm, num_zeros_in_grad, num_floating_point_operations_so_far, grad_norm_per_layer=None):
     """Log training information such as losses, timing, ...."""
     args = get_args()
     timers = get_timers()
@@ -1438,7 +1438,7 @@ def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_r
                              iteration)
             wandb_writer.log({'tokens vs steps': args.consumed_train_samples * args.seq_length},
                              iteration)
-            wandb_writer.log({'flops vs steps': args.num_floating_point_operations_so_far},
+            wandb_writer.log({'flops vs steps': num_floating_point_operations_so_far},
                              iteration)
         writer.add_scalar('learning-rate', learning_rate, iteration)
         writer.add_scalar('learning-rate vs samples', learning_rate,
@@ -2126,7 +2126,7 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
                                           decoupled_learning_rate,
                                           iteration, loss_scale,
                                           report_memory_flag, skipped_iter,
-                                          grad_norm, params_norm, num_zeros_in_grad,
+                                          grad_norm, params_norm, num_zeros_in_grad, num_floating_point_operations_so_far,
                                           grad_norm_per_layer=grad_norm_per_layer)
 
         # Evaluation.
