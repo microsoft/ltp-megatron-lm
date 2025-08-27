@@ -318,6 +318,11 @@ if __name__ == "__main__":
 
     # Temporary for transition to core datasets
     train_valid_test_datasets_provider.is_distributed = True
+    
+    # monkey patch
+    import functools
+    torch_load_orig = torch.load
+    torch.load = functools.partial(torch_load_orig, weights_only=False)
 
     pretrain(
         train_valid_test_datasets_provider,
