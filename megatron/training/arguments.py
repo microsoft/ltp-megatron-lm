@@ -2034,6 +2034,8 @@ def _add_checkpointing_args(parser):
                             'https://learn.microsoft.com/en-us/azure/storage/common/scalability-targets-standard-account for details')
     group.add_argument('--ckpt-upload-blob-concurrency', type=str, default='AUTO',
                        help='Number of concurrent requests that can occur during Azure blob upload.')
+    group.add_argument('--ckpt-upload-log-dir', type=str, default='$HOME/.azcopy',
+                       help='Log directory for checkpoint upload.')
     group.add_argument('--ckpt-isolated-save', action='store_true',
                        help='Whether the checkpoints need to be saved to multiple isolated places.')
     return parser
