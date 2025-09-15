@@ -437,13 +437,15 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
         residual = hidden_states
 
         # Optional Input Layer norm
-        if self.recompute_input_layernorm:
-            self.input_layernorm_checkpoint = tensor_parallel.CheckpointWithoutOutput()
-            input_layernorm_output = self.input_layernorm_checkpoint.checkpoint(
-                self.input_layernorm, hidden_states
-            )
-        else:
-            input_layernorm_output = self.input_layernorm(hidden_states)
+        #! update ruizhe: delete pre-norm (Attention Part)
+        # if self.recompute_input_layernorm:
+        #     self.input_layernorm_checkpoint = tensor_parallel.CheckpointWithoutOutput()
+        #     input_layernorm_output = self.input_layernorm_checkpoint.checkpoint(
+        #         self.input_layernorm, hidden_states
+        #     )
+        # else:
+        #     input_layernorm_output = self.input_layernorm(hidden_states)
+        input_layernorm_output = hidden_states
 
         # Self attention.
         attention_output_with_bias = self.self_attention(
@@ -471,6 +473,9 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
             hidden_states = self.self_attn_bda(self.training, self.config.bias_dropout_fusion)(
                 attention_output_with_bias, residual, self.hidden_dropout
             )
+            
+        #! update ruizhe: add post-norm (Attention Part)
+        hidden_states = self.input_layernorm(hidden_states)
 
         # Residual connection.
         residual = hidden_states
@@ -500,13 +505,15 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
         residual = hidden_states
 
         # Optional Layer norm post the cross-attention.
-        if self.recompute_pre_mlp_layernorm:
-            self.pre_mlp_norm_checkpoint = tensor_parallel.CheckpointWithoutOutput()
-            pre_mlp_layernorm_output = self.pre_mlp_norm_checkpoint.checkpoint(
-                self.pre_mlp_layernorm, hidden_states
-            )
-        else:
-            pre_mlp_layernorm_output = self.pre_mlp_layernorm(hidden_states)
+        #! update ruizhe: delete pre-norm (MLP part)
+        # if self.recompute_pre_mlp_layernorm:
+        #     self.pre_mlp_norm_checkpoint = tensor_parallel.CheckpointWithoutOutput()
+        #     pre_mlp_layernorm_output = self.pre_mlp_norm_checkpoint.checkpoint(
+        #         self.pre_mlp_layernorm, hidden_states
+        #     )
+        # else:
+        #     pre_mlp_layernorm_output = self.pre_mlp_layernorm(hidden_states)
+        pre_mlp_layernorm_output = hidden_states
 
         return pre_mlp_layernorm_output, residual, context
 
@@ -543,6 +550,9 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
             hidden_states = self.mlp_bda(self.training, self.config.bias_dropout_fusion)(
                 mlp_output_with_bias, residual, self.hidden_dropout
             )
+            
+        #! update ruizhe: add post-norm (MLP part)
+        hidden_states = self.pre_mlp_layernorm(hidden_states)
 
         # Jit compiled function creates 'view' tensor. This tensor
         # potentially gets saved in the MPU checkpoint function context,
