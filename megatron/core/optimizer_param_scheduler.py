@@ -141,6 +141,7 @@ class OptimizerParamScheduler:
 
         # For any steps larger than `self.lr_decay_steps`, use `min_lr`.
         #! hard 0917: pre-train for 70k steps (300B token) and anneal for 24k steps (100B token)
+        #! here 'step' indicates number of samples. so need multiple gbs 1024
         # if self.num_steps > self.lr_decay_steps:
         if self.num_steps >= 94000:
             return min_lr
@@ -170,7 +171,7 @@ class OptimizerParamScheduler:
                 coeff = 1.0
             else:
                 wsd_steps = self.num_steps - wsd_anneal_start_
-                wsd_decay_steps = 24000  #! hard code 0917
+                wsd_decay_steps = 24000 * 1024  #! hard code 0917
                 # wsd_decay_ratio = float(wsd_steps) / float(self.wsd_decay_steps)
                 wsd_decay_ratio = float(wsd_steps) / float(wsd_decay_steps)
                 if self.lr_wsd_decay_style == "linear":
