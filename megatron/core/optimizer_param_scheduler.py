@@ -140,7 +140,9 @@ class OptimizerParamScheduler:
             return max_lr
 
         # For any steps larger than `self.lr_decay_steps`, use `min_lr`.
-        if self.num_steps > self.lr_decay_steps:
+        #! hard 0917: pre-train for 70k steps (300B token) and anneal for 24k steps (100B token)
+        # if self.num_steps > self.lr_decay_steps:
+        if self.num_steps >= 94000:
             return min_lr
 
         # If we are done with the warmup period, use the decay style.
@@ -162,12 +164,15 @@ class OptimizerParamScheduler:
         elif self.lr_decay_style == 'cosine':
             coeff = 0.5 * (math.cos(math.pi * decay_ratio) + 1.0)
         elif self.lr_decay_style == 'WSD':
-            wsd_anneal_start_ = self.lr_decay_steps - self.wsd_decay_steps
+            # wsd_anneal_start_ = self.lr_decay_steps - self.wsd_decay_steps
+            wsd_anneal_start_ = 70000  #! hard code 0917
             if self.num_steps <= wsd_anneal_start_:
                 coeff = 1.0
             else:
                 wsd_steps = self.num_steps - wsd_anneal_start_
-                wsd_decay_ratio = float(wsd_steps) / float(self.wsd_decay_steps)
+                wsd_decay_steps = 24000  #! hard code 0917
+                # wsd_decay_ratio = float(wsd_steps) / float(self.wsd_decay_steps)
+                wsd_decay_ratio = float(wsd_steps) / float(wsd_decay_steps)
                 if self.lr_wsd_decay_style == "linear":
                     coeff = 1.0 - wsd_decay_ratio
                 elif self.lr_wsd_decay_style == "cosine":
