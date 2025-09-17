@@ -143,7 +143,7 @@ class OptimizerParamScheduler:
         #! hard 0917: pre-train for 70k steps (300B token) and anneal for 24k steps (100B token)
         #! here 'step' indicates number of samples. so need multiple gbs 1024
         # if self.num_steps > self.lr_decay_steps:
-        if self.num_steps >= 94000:
+        if self.num_steps >= 94000 * 1024:
             return min_lr
 
         # If we are done with the warmup period, use the decay style.
@@ -166,7 +166,7 @@ class OptimizerParamScheduler:
             coeff = 0.5 * (math.cos(math.pi * decay_ratio) + 1.0)
         elif self.lr_decay_style == 'WSD':
             # wsd_anneal_start_ = self.lr_decay_steps - self.wsd_decay_steps
-            wsd_anneal_start_ = 70000  #! hard code 0917
+            wsd_anneal_start_ = 70000 * 1024  #! hard code 0917
             if self.num_steps <= wsd_anneal_start_:
                 coeff = 1.0
             else:
