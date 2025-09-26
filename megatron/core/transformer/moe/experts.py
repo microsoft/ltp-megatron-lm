@@ -565,11 +565,11 @@ class GroupedMLP(MegatronModule):
                     first_glu_idx = local_expert_dict['first_glu_idx']
                     if first_glu_idx == 0:
                         res += [
-                            x for x in itertools.chain(*itertools.zip_longest(w_tensors, v_tensors))
+                            x for x in itertools.chain(*itertools.zip_longest(w_tensors, v_tensors, fillvalue=torch.Tensor()))
                         ]
                     else:
                         res += [
-                            x for x in itertools.chain(*itertools.zip_longest(v_tensors, w_tensors))
+                            x for x in itertools.chain(*itertools.zip_longest(v_tensors, w_tensors, fillvalue=torch.Tensor()))
                         ]
                 return torch.cat(res)
             elif isinstance(sub_state_dict, list) and sub_state_dict[0].ndim == 1:
