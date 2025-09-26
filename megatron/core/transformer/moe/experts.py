@@ -563,13 +563,18 @@ class GroupedMLP(MegatronModule):
                         local_expert_dict['v_tensors'], local_expert_dict['v_lens']
                     )
                     first_glu_idx = local_expert_dict['first_glu_idx']
+                    fill_tensor = None
+                    if len(w_tensors):
+                        fill_tensor = w_tensors[0].new_empty(0)
+                    elif len(v_tensors):
+                        fill_tensor = v_tensors[0].new_empty(0)
                     if first_glu_idx == 0:
                         res += [
-                            x for x in itertools.chain(*itertools.zip_longest(w_tensors, v_tensors))
+                            x for x in itertools.chain(*itertools.zip_longest(w_tensors, v_tensors, fillvalue=fill_tensor))
                         ]
                     else:
                         res += [
-                            x for x in itertools.chain(*itertools.zip_longest(v_tensors, w_tensors))
+                            x for x in itertools.chain(*itertools.zip_longest(v_tensors, w_tensors, fillvalue=fill_tensor))
                         ]
                 return torch.cat(res)
             elif isinstance(sub_state_dict, list) and sub_state_dict[0].ndim == 1:
