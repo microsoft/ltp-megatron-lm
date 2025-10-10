@@ -100,19 +100,62 @@ def get_transformer_layer_offset(config: TransformerConfig):
                     + num_layers_per_virtual_model_chunk_in_last_pipeline_stage
                 )
 
-                # Calculate the layer offset with interleaved uneven pipeline parallelism
-                if pipeline_rank == 0:
-                    offset = vp_rank * total_virtual_chunks
-                else:
-                    offset = (
-                        vp_rank * total_virtual_chunks
-                        + num_layers_per_virtual_model_chunk_in_first_pipeline_stage
-                        + (pipeline_rank - 1)
-                        * (
-                            num_layers_per_vritual_model_chunk_in_middle_pipeline_stage
-                            // middle_pipeline_stages
-                        )
+                if (
+                    config.decoder_first_pipeline_num_layers_split is not None
+                    or config.decoder_last_pipeline_num_layers_split is not None
+                ):
+                    if config.decoder_first_pipeline_num_layers_split is not None:
+                        first_stage_split = config.decoder_first_pipeline_num_layers_split
+                    else:
+                        first_stage_split = [
+                            num_layers_per_virtual_model_chunk_in_first_pipeline_stage
+                            for _ in range(vp_size)
+                        ]
+
+                    if config.decoder_last_pipeline_num_layers_split is not None:
+                        last_stage_split = config.decoder_last_pipeline_num_layers_split
+                    else:
+                        last_stage_split = [
+                            num_layers_per_virtual_model_chunk_in_last_pipeline_stage
+                            for _ in range(vp_size)
+                        ]
+
+                    middle_chunk_layers = (
+                        num_layers_per_vritual_model_chunk_in_middle_pipeline_stage
+                        // middle_pipeline_stages
                     )
+
+                    pipeline_size = parallel_state.get_pipeline_model_parallel_world_size()
+                    offset = 0
+                    for vp_idx in range(vp_rank):
+                        for pp_idx in range(pipeline_size):
+                            if pp_idx == 0:
+                                offset += first_stage_split[vp_idx]
+                            elif pp_idx == pipeline_size - 1:
+                                offset += last_stage_split[vp_idx]
+                            else:
+                                offset += middle_chunk_layers
+                    for pp_idx in range(pipeline_rank):
+                        if pp_idx == 0:
+                            offset += first_stage_split[vp_rank]
+                        elif pp_idx == pipeline_size - 1:
+                            offset += last_stage_split[vp_rank]
+                        else:
+                            offset += middle_chunk_layers
+                else:
+                    # Calculate the layer offset with interleaved uneven pipeline parallelism
+                    if pipeline_rank == 0:
+                        offset = vp_rank * total_virtual_chunks
+                    else:
+                        offset = (
+                            vp_rank * total_virtual_chunks
+                            + num_layers_per_virtual_model_chunk_in_first_pipeline_stage
+                            + (pipeline_rank - 1)
+                            * (
+                                num_layers_per_vritual_model_chunk_in_middle_pipeline_stage
+                                // middle_pipeline_stages
+                            )
+                        )
             else:
                 if middle_pipeline_stages > 0:
                     num_layers_per_pipeline_rank = middle_num_layers // middle_pipeline_stages

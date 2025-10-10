@@ -2106,6 +2106,12 @@ def _add_distributed_args(parser):
                        type=int, default=None,
                        help=('The number of transformer layers on the last pipeline stage of the decoder. '
                        'Default None is even split of transformer layers across all pipeline stages'))
+    group.add_argument('--decoder-first-pipeline-num-layers-split',
+                       nargs='+', type=int, default=None,
+                       help=('Virtual pipeline split of the first stage in uneven pipeline mode.'))
+    group.add_argument('--decoder-last-pipeline-num-layers-split',
+                       nargs='+', type=int, default=None,
+                       help=('Virtual pipeline split of the last stage in uneven pipeline mode.'))
     group.add_argument('--model-parallel-size', type=int, default=None,
                        help='Old model parallel argument, do not use. Use '
                        '--tensor-model-parallel-size instead.')

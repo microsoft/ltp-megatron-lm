@@ -132,14 +132,28 @@ def get_num_layers_to_build(config: TransformerConfig) -> int:
         # Stage 0: [0, 1]  [4, 5]
         # Stage 1: [2, 3]  [6, 7]
         vp_size = parallel_state.get_virtual_pipeline_model_parallel_world_size()
+        vp_rank = parallel_state.get_virtual_pipeline_model_parallel_rank()
 
-        assert (
-            num_layers_per_pipeline_rank % vp_size == 0
-        ), f"num_layers_per_pipeline_rank {num_layers_per_pipeline_rank} \
-            should be divisible by vp_size {vp_size}"
-        num_layers_per_virtual_rank = num_layers_per_pipeline_rank // vp_size
+        if (
+            config.decoder_first_pipeline_num_layers_split is not None
+            and parallel_state.is_pipeline_first_stage(ignore_virtual=True)
+        ):
+            num_layers_to_build = \
+                config.decoder_first_pipeline_num_layers_split[vp_rank]
+        elif (
+            config.decoder_last_pipeline_num_layers_split is not None
+            and parallel_state.is_pipeline_last_stage(ignore_virtual=True)
+        ):
+            num_layers_to_build = \
+                config.decoder_last_pipeline_num_layers_split[vp_rank]
+        else:
+            assert (
+                num_layers_per_pipeline_rank % vp_size == 0
+            ), f"num_layers_per_pipeline_rank {num_layers_per_pipeline_rank} \
+                should be divisible by vp_size {vp_size}"
+            num_layers_per_virtual_rank = num_layers_per_pipeline_rank // vp_size
 
-        num_layers_to_build = num_layers_per_virtual_rank
+            num_layers_to_build = num_layers_per_virtual_rank
 
     else:
         # Non-interleaved pipeline parallelism:
