@@ -506,6 +506,33 @@ class TransformerBlock(MegatronModule):
         use_inner_fp8_context = self.config.fp8 and self.config.fp8_recipe != Fp8Recipe.delayed
         outer_fp8_context = get_fp8_context(self.config) if use_outer_fp8_context else nullcontext()
 
+        # prepare for recursive transformer indices
+        if not self.config.use_recursive_transformer:
+            layer_indices_to_run = list(range(len(self.layers)))
+        else:
+            layer_indices_to_run = []
+            
+            start_idx = self.config.recursive_start_layer_idx
+            end_idx = self.config.recursive_end_layer_idx
+            num_recursions = self.config.recursive_num_recursions
+
+            # 1. add layers before the recursive block
+            layer_indices_to_run.extend(range(start_idx))
+
+            # 2. add layers within the recursive block multiple times
+            recursive_block = list(range(start_idx, end_idx + 1))
+            for _ in range(num_recursions):
+                layer_indices_to_run.extend(recursive_block)
+
+            # 3. add layers after the recursive block
+            layer_indices_to_run.extend(range(end_idx + 1, len(self.layers)))
+
+            # Example: start=2, end=6, num=2, total_layers=9
+            # 1. range(2) -> [0, 1]
+            # 2. range(2, 7) * 2 -> [2, 3, 4, 5, 6, 2, 3, 4, 5, 6]
+            # 3. range(7, 9) -> [7, 8]
+            # Final list: [0, 1, 2, 3, 4, 5, 6, 2, 3, 4, 5, 6, 7, 8]
+
         with rng_context, outer_fp8_context:
             # Forward pass.
             if self.config.recompute_granularity == 'full' and self.training:
@@ -519,7 +546,10 @@ class TransformerBlock(MegatronModule):
                     packed_seq_params=packed_seq_params,
                 )
             else:
-                for l_no, layer in enumerate(self.layers):
+                # for l_no, layer in enumerate(self.layers):
+                for l_no in layer_indices_to_run:
+                    layer = self._get_layer(l_no)
+                    
                     inner_fp8_context = (
                         get_fp8_context(self.config, layer.layer_number - 1)
                         if use_inner_fp8_context

@@ -52,6 +52,7 @@ def add_megatron_arguments(parser: argparse.ArgumentParser):
     parser = _add_vision_args(parser)
     parser = _add_moe_args(parser)
     parser = _add_mla_args(parser)
+    parser = _add_recursive_transformer_args(parser)
     parser = _add_heterogeneous_args(parser)
     parser = _add_logging_args(parser)
     parser = _add_straggler_detector_args(parser)
@@ -2653,6 +2654,18 @@ def _add_mla_args(parser):
     group.add_argument('--mscale-all-dim', type=float, default=1.0,
                        help="Mscale all dimensions for YaRN RoPE in multi-latent attention.")
 
+    return parser
+
+def _add_recursive_transformer_args(parser):
+    group = parser.add_argument_group(title="recursive transformer")
+    group.add_argument('--use-recursive-transformer', action='store_true',
+                       help='Enable recursive transformer architecture.')
+    group.add_argument('--recursive-start-layer-idx', type=int, default=0,
+                       help='The layer from which to start applying recursion.')
+    group.add_argument('--recursive-end-layer-idx', type=int, default=-1,
+                       help='The layer at which to stop applying recursion.')
+    group.add_argument('--recursive-num-recursions', type=int, default=2,
+                       help='Number of times to recursively apply the selected layers.')
     return parser
 
 def _add_heterogeneous_args(parser):

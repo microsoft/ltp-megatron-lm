@@ -478,6 +478,22 @@ class TransformerConfig(ModelParallelConfig):
 
     moe_apply_probs_on_input: bool = False
     """Apply probs on input of experts instead of applying after activation and glu."""
+    
+    ##################
+    # Recursive Transformer
+    ##################
+    
+    use_recursive_transformer: bool = False
+    """If True, use Recursive Transformer architecture."""
+
+    recursive_start_layer_idx: int = 0
+    """The layer from which to start applying recursion."""
+
+    recursive_end_layer_idx: int = 0
+    """The layer at which to stop applying recursion."""
+
+    recursive_num_recursions: int = 2
+    """The number of times to apply the recursive layers."""
 
     ##################
     # Context Parallel
