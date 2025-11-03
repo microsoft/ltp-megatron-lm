@@ -51,7 +51,7 @@ class BlendedDataset(torch.utils.data.Dataset):
         assert all(map(lambda _: _.index_split == datasets[0].index_split, datasets))
         # assert all(map(lambda _: _ > 0, weights))
         if not all(map(lambda _: _ > 0, weights)):
-            weights = [w if w > 0 else 0.01 for w in weights]
+            weights = [w if w > 0 else 1 for w in weights]
             log_single_rank(
                 logger,
                 logging.WARNING,
