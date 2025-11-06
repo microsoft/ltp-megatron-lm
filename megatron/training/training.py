@@ -317,6 +317,12 @@ def num_floating_point_operations(args, batch_size):
                 )
             )
 
+        if args.use_recursive_transformer:
+            #! update effective num layers for recursive transformer
+            num_layers = num_layers + (args.recursive_num_recursions - 1) * (args.recursive_end_layer_idx - args.recursive_start_layer_idx + 1)
+        else:
+            pass
+        
         total_floating_point_operations = batch_size * args.seq_length * (
             # MLP
             expansion_factor
