@@ -1170,7 +1170,7 @@ def setup_model_and_optimizer(model_provider_func,
         timers('load-checkpoint', log_level=0).start(barrier=True)
 
         args.iteration, args.num_floating_point_operations_so_far = load_checkpoint(
-                model, optimizer, opt_param_scheduler, checkpointing_context=checkpointing_context,
+                model, optimizer, opt_param_scheduler, checkpointing_context=checkpointing_context, strict=False,
                 skip_load_to_model_and_opt=HAVE_FSDP2 and getattr(args, "use_torch_fsdp2", False) and args.ckpt_format == "torch_dist")
         timers('load-checkpoint').stop(barrier=True)
         timers.log(['load-checkpoint'])
