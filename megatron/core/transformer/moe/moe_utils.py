@@ -147,7 +147,7 @@ def global_batch_load_balancing_loss_func(
     routing_prob = probs.mean(0)
 
     routing_count = routing_map.int().sum(0)
-    torch.distributed.nn.all_reduce(routing_count, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_data_parallel_group())
+    torch.distributed.all_reduce(routing_count, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_data_parallel_group())
 
     # If the sequence is partitioned by certain parallelism strategies like Sequence Parallelism
     # or Context Parallelism, compute the gradient of the auxiliary loss with respect to the full
@@ -155,7 +155,7 @@ def global_batch_load_balancing_loss_func(
     if sequence_partition_group is not None:
         routing_prob /= sequence_partition_group.size()
         routing_prob_count = torch.stack([routing_prob, routing_count])
-        torch.distributed.nn.all_reduce(routing_prob_count, op=torch.distributed.ReduceOp.SUM, group=sequence_partition_group)
+        torch.distributed.all_reduce(routing_prob_count, op=torch.distributed.ReduceOp.SUM, group=sequence_partition_group)
         routing_prob, routing_count = routing_prob_count[0], routing_prob_count[1]
 
     routing_freq = routing_count / routing_count.sum()
