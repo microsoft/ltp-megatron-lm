@@ -1,7 +1,8 @@
 # Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
 
-""" Storage writer for PyT Distributed format allowing asynchronous save. """
+"""Storage writer for PyT Distributed format allowing asynchronous save."""
 import dataclasses
+import inspect
 import logging
 import os
 import queue
@@ -314,16 +315,25 @@ class FileSystemWriterAsync(FileSystemWriter):
         local_results = []
         try:
             file_name, storage_key, (bytes_data, tensor_data) = write_bucket
+            extra_kwargs = {}
+            if "serialization_format" in inspect.signature(_write_item).parameters:
+                from torch.distributed.checkpoint.filesystem import SerializationFormat
+
+                extra_kwargs['serialization_format'] = SerializationFormat.TORCH_SAVE
             with open(file_name, "wb") as stream:
                 for write_item, data in bytes_data:
                     local_results.append(
-                        _write_item(*transform_list, stream, data, write_item, storage_key)
+                        _write_item(
+                            *transform_list, stream, data, write_item, storage_key, **extra_kwargs
+                        )
                     )
 
                 for write_item, tensor in tensor_data:
                     assert tensor.is_cpu
                     local_results.append(
-                        _write_item(*transform_list, stream, tensor, write_item, storage_key)
+                        _write_item(
+                            *transform_list, stream, tensor, write_item, storage_key, **extra_kwargs
+                        )
                     )
 
                 if use_fsync:
