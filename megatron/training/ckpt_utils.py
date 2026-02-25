@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 import asyncio
 import os
 import queue
@@ -44,6 +47,7 @@ class CkptUploadQueue:
         self.blob_path = args.ckpt_upload_blob_path.rstrip("/")
         self.blob_sas_path = args.ckpt_upload_blob_sas_path
         self.blob_concurrency = args.ckpt_upload_blob_concurrency
+        self.log_dir = os.path.expandvars(args.ckpt_upload_log_dir)
 
         self.upload_tasks = queue.Queue()
         self._running = True
@@ -129,7 +133,10 @@ class CkptUploadQueue:
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env={"AZCOPY_CONCURRENCY_VALUE": self.blob_concurrency},
+            env={
+                "AZCOPY_CONCURRENCY_VALUE": self.blob_concurrency,
+                "AZCOPY_LOG_LOCATION": self.log_dir,
+            },
         )
         stdout, stderr = await proc.communicate()
         if stdout:
