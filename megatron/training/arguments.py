@@ -2633,6 +2633,26 @@ def _add_moe_args(parser):
                        help='Pads the input for each expert to match the expert capacity length, effective only after the --moe-expert-capacity-factor is set.')
     group.add_argument('--moe-token-drop-policy', type=str, default='probs', choices=['probs', 'position'],
                        help='The policy to drop tokens. Can be either "probs" or "position". If "probs", the tokens with the lowest probabilities will be dropped. If "position", tokens at the end of each batch will be dropped.')
+    # Recursive MoE (Loop Expert) arguments
+    group.add_argument('--moe-num-iterations', type=int, default=1,
+                       help='Number of iterative passes through expert computation within a single '
+                       'MoE layer. 1 = standard MoE, >=2 = recursive/loop MoE where hidden states '
+                       'are iteratively routed and processed through experts with shared weights.')
+    group.add_argument('--moe-iteration-residual', type=str, default='add',
+                       choices=['add', 'replace'],
+                       help='Residual connection strategy between expert iterations. '
+                       '"add": x_{i+1} = x_i + expert_output (standard residual). '
+                       '"replace": x_{i+1} = expert_output (direct replacement).')
+    group.add_argument('--moe-iteration-routing-strategy', type=str, default='reroute',
+                       choices=['reroute', 'multi_router', 'dedup', 'fixed'],
+                       help='Routing strategy for multiple expert iterations. '
+                       '"reroute": re-invoke same router with updated hidden_states each iteration. '
+                       '"multi_router": use independent Router instances per iteration. '
+                       '"dedup": re-route but mask out already-selected (token, expert) pairs. '
+                       '"fixed": route once and reuse for all iterations.')
+    group.add_argument('--moe-iteration-aux-loss-scale', type=float, default=1.0,
+                       help='Scaling factor for auxiliary loss from additional routing iterations '
+                       '(iterations 2..N). Prevents aux loss from dominating with multiple routes.')
 
     return parser
 

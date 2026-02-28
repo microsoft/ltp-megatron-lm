@@ -480,6 +480,32 @@ class TransformerConfig(ModelParallelConfig):
     """Apply probs on input of experts instead of applying after activation and glu."""
 
     ##################
+    # Recursive MoE (Loop Expert)
+    ##################
+    moe_num_iterations: int = 1
+    """Number of iterative passes through the expert computation within a single MoE layer.
+    When set to 1 (default), behaves as standard MoE. When >= 2, the hidden states are
+    iteratively routed and processed through experts multiple times with shared weights,
+    inspired by Loop Transformer research on iterative computation for enhanced reasoning."""
+
+    moe_iteration_residual: str = "add"
+    """Residual connection strategy between expert iterations.
+    'add': x_{i+1} = x_i + expert_output (standard residual, like Transformer).
+    'replace': x_{i+1} = expert_output (direct replacement)."""
+
+    moe_iteration_routing_strategy: str = "reroute"
+    """Routing strategy for multiple expert iterations.
+    'reroute': Re-invoke the same router with updated hidden_states each iteration.
+    'multi_router': Use independent Router instances (separate parameters) per iteration.
+    'dedup': Re-route but mask out (token, expert) pairs already selected in prior iterations.
+    'fixed': Route once and reuse the same routing decisions for all iterations."""
+
+    moe_iteration_aux_loss_scale: float = 1.0
+    """Scaling factor for auxiliary loss from additional routing iterations.
+    Applied to iterations 2..N to prevent aux loss from dominating when routing
+    is called multiple times. E.g., 0.5 means half-weight aux loss for extra iterations."""
+
+    ##################
     # Context Parallel
     ##################
     cp_comm_type: Optional[Union[str, List[str]]] = None
@@ -690,6 +716,31 @@ class TransformerConfig(ModelParallelConfig):
                 raise ValueError(
                     'moe_expert_capacity_factor must be set to use moe_pad_expert_input_to_capacity'
                 )
+
+        # Recursive MoE (Loop Expert) validation
+        if self.moe_num_iterations < 1:
+            raise ValueError(
+                f'moe_num_iterations must be >= 1, got {self.moe_num_iterations}'
+            )
+        if self.moe_iteration_residual not in ["add", "replace"]:
+            raise ValueError(
+                f'moe_iteration_residual must be "add" or "replace", '
+                f'got {self.moe_iteration_residual}'
+            )
+        if self.moe_iteration_routing_strategy not in [
+            "reroute", "multi_router", "dedup", "fixed"
+        ]:
+            raise ValueError(
+                f'moe_iteration_routing_strategy must be one of '
+                f'"reroute", "multi_router", "dedup", "fixed", '
+                f'got {self.moe_iteration_routing_strategy}'
+            )
+        if self.moe_num_iterations > 1 and self.moe_shared_expert_overlap:
+            warnings.warn(
+                "moe_shared_expert_overlap with moe_num_iterations > 1: "
+                "shared expert overlap will only apply to the last iteration's dispatcher call. "
+                "Consider disabling moe_shared_expert_overlap for recursive MoE."
+            )
 
         if self.cpu_offloading and (
             self.cpu_offloading_num_layers < 0 or self.cpu_offloading_num_layers >= self.num_layers

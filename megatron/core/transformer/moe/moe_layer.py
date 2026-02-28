@@ -90,8 +90,22 @@ class MoELayer(BaseMoELayer):
             config.recompute_granularity == 'selective' and "moe" in config.recompute_modules
         )
 
-        # Initialize router
-        self.router = TopKRouter(config=self.config)
+        # Recursive MoE config
+        self.num_iterations = config.moe_num_iterations
+        self.iteration_residual = config.moe_iteration_residual
+        self.iteration_routing_strategy = config.moe_iteration_routing_strategy
+        self.iteration_aux_loss_scale = config.moe_iteration_aux_loss_scale
+
+        # Initialize router(s)
+        if self.iteration_routing_strategy == "multi_router" and self.num_iterations > 1:
+            # Independent router per iteration
+            self.router = TopKRouter(config=self.config)  # iteration 0
+            self.extra_routers = torch.nn.ModuleList(
+                [TopKRouter(config=self.config) for _ in range(self.num_iterations - 1)]
+            )
+        else:
+            self.router = TopKRouter(config=self.config)
+            self.extra_routers = None
 
         # Initialize token dispatcher
         if config.moe_token_dispatcher_type == "allgather":
@@ -138,6 +152,35 @@ class MoELayer(BaseMoELayer):
     def set_layer_number(self, layer_number: int):
         super(MoELayer, self).set_layer_number(layer_number)
         self._set_moe_layer_recompute()
+        # Also set layer number for extra routers if using multi_router strategy
+        if self.extra_routers is not None:
+            for router in self.extra_routers:
+                router.set_layer_number(layer_number)
+
+    def _get_router_for_iteration(self, iteration: int):
+        """Get the appropriate router for a given iteration index."""
+        if self.iteration_routing_strategy == "multi_router" and self.extra_routers is not None:
+            if iteration == 0:
+                return self.router
+            else:
+                return self.extra_routers[iteration - 1]
+        else:
+            return self.router
+
+    def _apply_dedup_mask(self, routing_map, accumulated_routing_map):
+        """For 'dedup' strategy: mask out (token, expert) pairs already selected in prior iterations.
+
+        Args:
+            routing_map: Current routing map [num_tokens, num_experts] (bool).
+            accumulated_routing_map: Union of all prior routing maps [num_tokens, num_experts] (bool).
+
+        Returns:
+            Modified routing_map with previously-selected pairs masked out.
+        """
+        # Mask out experts already selected in prior iterations
+        dedup_mask = ~accumulated_routing_map  # True for NOT-yet-selected
+        routing_map = routing_map & dedup_mask
+        return routing_map
 
     def forward(self, hidden_states: torch.Tensor):
         if (
@@ -152,17 +195,83 @@ class MoELayer(BaseMoELayer):
 
         # process MoE
         def custom_forward(hidden_states):
-            probs, routing_map = self.router(hidden_states)
-            (dispatched_input, tokens_per_expert) = self.token_dispatcher.token_permutation(
-                hidden_states, probs, routing_map
-            )
-            expert_output, mlp_bias = self.experts(dispatched_input, tokens_per_expert)
-            output, mlp_bias = self.token_dispatcher.token_unpermutation(expert_output, mlp_bias)
+            if self.num_iterations <= 1:
+                # Standard MoE path — no loop overhead
+                probs, routing_map = self.router(hidden_states)
+                (dispatched_input, tokens_per_expert) = self.token_dispatcher.token_permutation(
+                    hidden_states, probs, routing_map
+                )
+                expert_output, mlp_bias = self.experts(dispatched_input, tokens_per_expert)
+                output, mlp_bias = self.token_dispatcher.token_unpermutation(
+                    expert_output, mlp_bias
+                )
+                if self.use_shared_expert and not self.shared_expert_overlap:
+                    output = output + self.shared_experts(hidden_states)
+                return output, mlp_bias
+
+            # ============ Recursive MoE path ============
+            # Save original input for shared expert (applied once at the end)
+            original_hidden_states = hidden_states
+            accumulated_routing_map = None  # For dedup strategy
+            fixed_probs = None  # For fixed strategy
+            fixed_routing_map = None
+            final_mlp_bias = None
+
+            for iteration in range(self.num_iterations):
+                # --- Set aux loss scale for this iteration ---
+                aux_scale = 1.0 if iteration == 0 else self.iteration_aux_loss_scale
+                
+                # --- Routing ---
+                if self.iteration_routing_strategy == "fixed":
+                    # Route only on the first iteration, reuse for subsequent ones
+                    if iteration == 0:
+                        fixed_probs, fixed_routing_map = self.router(hidden_states)
+                    probs, routing_map = fixed_probs, fixed_routing_map
+                elif self.iteration_routing_strategy == "multi_router":
+                    router = self._get_router_for_iteration(iteration)
+                    router._aux_loss_scale = aux_scale
+                    probs, routing_map = router(hidden_states)
+                elif self.iteration_routing_strategy == "dedup":
+                    self.router._aux_loss_scale = aux_scale
+                    probs, routing_map = self.router(hidden_states)
+                    if accumulated_routing_map is not None:
+                        routing_map = self._apply_dedup_mask(routing_map, accumulated_routing_map)
+                        # Recompute probs: zero out masked positions
+                        probs = probs * routing_map
+                    # Track which (token, expert) pairs have been used
+                    if accumulated_routing_map is None:
+                        accumulated_routing_map = routing_map.clone()
+                    else:
+                        accumulated_routing_map = accumulated_routing_map | routing_map
+                else:
+                    # "reroute": simply re-invoke the same router with updated hidden_states
+                    self.router._aux_loss_scale = aux_scale
+                    probs, routing_map = self.router(hidden_states)
+
+                # --- Expert computation (permute → experts → unpermute) ---
+                (dispatched_input, tokens_per_expert) = self.token_dispatcher.token_permutation(
+                    hidden_states, probs, routing_map
+                )
+                expert_output, mlp_bias = self.experts(dispatched_input, tokens_per_expert)
+                output, mlp_bias = self.token_dispatcher.token_unpermutation(
+                    expert_output, mlp_bias
+                )
+
+                # --- Residual connection ---
+                if self.iteration_residual == "add":
+                    hidden_states = hidden_states + output
+                else:
+                    # "replace"
+                    hidden_states = output
+
+                if mlp_bias is not None:
+                    final_mlp_bias = mlp_bias  # keep the last one
+
+            # Apply shared expert once at the end (not per iteration)
             if self.use_shared_expert and not self.shared_expert_overlap:
-                # if shared_expert_overlap is True, the expert calculation happens in
-                # the token_dispatcher to overlap communications and computations
-                output = output + self.shared_experts(hidden_states)
-            return output, mlp_bias
+                hidden_states = hidden_states + self.shared_experts(original_hidden_states)
+
+            return hidden_states, final_mlp_bias
 
         if self.moe_layer_recompute:
             output, mlp_bias = tensor_parallel.checkpoint(custom_forward, False, hidden_states)

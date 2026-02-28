@@ -131,6 +131,8 @@ class TopKRouter(Router):
         self.score_function = self.config.moe_router_score_function
         self.moe_aux_loss_score_function = self.config.moe_aux_loss_score_function
         self.input_jitter = None
+        # Temporary aux loss scale factor for recursive MoE iterations
+        self._aux_loss_scale = 1.0
 
         self.enable_expert_bias = self.config.moe_router_enable_expert_bias
         if self.enable_expert_bias:
@@ -378,6 +380,8 @@ class TopKRouter(Router):
         moe_aux_loss_coeff = self.config.moe_aux_loss_coeff
         if moe_aux_loss_coeff == 0:
             return activation
+        # Apply iteration-level aux loss scaling for recursive MoE
+        moe_aux_loss_coeff = moe_aux_loss_coeff * self._aux_loss_scale
         sequence_partition_group = None
         if self.config.moe_token_dispatcher_type == "alltoall_seq":
             sequence_partition_group = parallel_state.get_context_parallel_group()
