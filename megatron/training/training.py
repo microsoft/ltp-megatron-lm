@@ -246,6 +246,8 @@ def num_floating_point_operations(args, batch_size):
             if args.moe_shared_expert_intermediate_size is None
             else args.moe_shared_expert_intermediate_size
         )
+        # Recursive MoE: expert computation is repeated moe_num_iterations times per layer
+        moe_num_iterations = getattr(args, 'moe_num_iterations', 1)
         # SwiGLU.
         gated_linear_multiplier = 3 / 2 if args.swiglu else 1
 
@@ -328,11 +330,12 @@ def num_floating_point_operations(args, batch_size):
                     args.ffn_hidden_size
                     * gated_linear_multiplier
                 ) * (num_dense_layers/num_layers)
-                # routed experts
+                # routed experts (multiplied by moe_num_iterations for recursive MoE)
                 + (
                     moe_ffn_hidden_size
                     * num_experts_routed_to
                     * gated_linear_multiplier
+                    * moe_num_iterations
                 ) * (num_moe_layers/num_layers)
                 # Shared Experts.
                 + (

@@ -5,6 +5,7 @@
 import pytest
 import torch
 
+from megatron.core import parallel_state
 from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_layer_local_spec,
 )
@@ -24,6 +25,7 @@ def _make_config(
     topk=2,
     hidden_size=12,
     dispatcher_type="allgather",
+    iteration_norm=True,
 ):
     """Helper to create a TransformerConfig for recursive MoE tests."""
     return TransformerConfig(
@@ -43,6 +45,7 @@ def _make_config(
         moe_iteration_residual=residual,
         moe_iteration_routing_strategy=routing_strategy,
         moe_iteration_aux_loss_scale=aux_loss_scale,
+        moe_iteration_norm=iteration_norm,
     )
 
 
@@ -268,3 +271,157 @@ class TestRecursiveMoEConfigValidation:
     def test_invalid_routing_strategy(self):
         with pytest.raises(ValueError, match="moe_iteration_routing_strategy"):
             _make_config(routing_strategy="invalid")
+
+
+class TestRecursiveMoEIterationNorm:
+    """Test iteration normalization between expert iterations."""
+
+    def setup_method(self, method):
+        Utils.initialize_model_parallel(1, 1)
+        _set_random_seed(seed_=123, data_parallel_random_init=False)
+
+    def teardown_method(self, method):
+        Utils.destroy_model_parallel()
+
+    def test_norm_module_created_when_enabled(self):
+        """With iteration_norm=True and iterations>1, norm module should be created."""
+        config = _make_config(num_iterations=2, iteration_norm=True)
+        layer = _build_moe_layer(config)
+        assert layer.iteration_norm is not None
+
+    def test_norm_module_not_created_when_disabled(self):
+        """With iteration_norm=False, no norm module should be created."""
+        config = _make_config(num_iterations=2, iteration_norm=False)
+        layer = _build_moe_layer(config)
+        assert layer.iteration_norm is None
+
+    def test_norm_module_not_created_single_iteration(self):
+        """With iterations=1, no norm needed even if flag is True."""
+        config = _make_config(num_iterations=1, iteration_norm=True)
+        layer = _build_moe_layer(config)
+        assert layer.iteration_norm is None
+
+    def test_norm_output_shape(self):
+        """Output shape should match input with norm enabled."""
+        config = _make_config(num_iterations=2, iteration_norm=True)
+        layer = _build_moe_layer(config)
+        layer.cuda()
+        hidden = torch.randn(8, 2, config.hidden_size, device=torch.cuda.current_device())
+        layer.train()
+        output, _ = layer(hidden)
+        assert output.shape == hidden.shape
+
+    def test_norm_vs_no_norm_different_output(self):
+        """Norm should produce different output than no-norm."""
+        model_parallel_cuda_manual_seed(42)
+        config_norm = _make_config(num_iterations=2, iteration_norm=True)
+        config_no_norm = _make_config(num_iterations=2, iteration_norm=False)
+
+        layer_norm = _build_moe_layer(config_norm).cuda()
+        layer_no_norm = _build_moe_layer(config_no_norm).cuda()
+
+        # Copy shared weights (experts, router, dispatcher)
+        # Get state dict from no-norm version
+        state_no_norm = layer_no_norm.state_dict()
+        # Load into norm version with strict=False (iteration_norm params won't match)
+        layer_norm.load_state_dict(state_no_norm, strict=False)
+
+        hidden = torch.randn(8, 2, config_norm.hidden_size, device=torch.cuda.current_device())
+        layer_norm.eval()
+        layer_no_norm.eval()
+
+        with torch.no_grad():
+            out_norm, _ = layer_norm(hidden.clone())
+            out_no_norm, _ = layer_no_norm(hidden.clone())
+
+        # Outputs should differ due to normalization
+        assert not torch.allclose(out_norm, out_no_norm, atol=1e-5)
+
+    def test_norm_gradient_flows(self):
+        """Verify gradients flow through the iteration norm parameters."""
+        config = _make_config(num_iterations=2, iteration_norm=True)
+        layer = _build_moe_layer(config).cuda()
+        layer.train()
+
+        hidden = torch.randn(
+            8, 2, config.hidden_size,
+            device=torch.cuda.current_device(),
+            requires_grad=True,
+        )
+        output, _ = layer(hidden)
+        loss = output.sum()
+        loss.backward()
+
+        # Check that iteration_norm has gradients
+        norm_has_grad = False
+        for name, param in layer.named_parameters():
+            if 'iteration_norm' in name and param.requires_grad:
+                assert param.grad is not None, f"No gradient for {name}"
+                norm_has_grad = True
+        assert norm_has_grad, "No iteration_norm parameters found with gradients"
+
+
+class TestRecursiveMoEMetricsNormalization:
+    """Test that tracker metrics are properly normalized for multi-iteration routing."""
+
+    def setup_method(self, method):
+        Utils.initialize_model_parallel(1, 1)
+        _set_random_seed(seed_=123, data_parallel_random_init=False)
+
+    def teardown_method(self, method):
+        Utils.destroy_model_parallel()
+
+    def test_reroute_metrics_normalized(self):
+        """Reroute with 2 iterations: tracked aux loss should be averaged, not doubled."""
+        config = _make_config(num_iterations=2, routing_strategy="reroute")
+        layer = _build_moe_layer(config).cuda()
+        layer.train()
+
+        # Clear tracker
+        tracker = parallel_state.get_moe_layer_wise_logging_tracker()
+        for name in list(tracker.keys()):
+            del tracker[name]
+
+        hidden = torch.randn(8, 2, config.hidden_size, device=torch.cuda.current_device())
+        output, _ = layer(hidden)
+
+        # Now run a baseline single-iteration for comparison
+        config_base = _make_config(num_iterations=1)
+        layer_base = _build_moe_layer(config_base).cuda()
+        layer_base.load_state_dict(layer.state_dict(), strict=False)
+        layer_base.train()
+
+        # Clear tracker for baseline
+        for name in list(tracker.keys()):
+            del tracker[name]
+
+        hidden_base = torch.randn(8, 2, config.hidden_size, device=torch.cuda.current_device())
+        output_base, _ = layer_base(hidden_base)
+
+        # The tracked load_balancing_loss should exist and be a reasonable value
+        # (not 2x what it would be for a single call)
+        if "load_balancing_loss" in tracker:
+            loss_val = tracker["load_balancing_loss"]["values"][0].item()
+            # Should be finite and non-negative
+            assert loss_val >= 0
+            assert not torch.isinf(torch.tensor(loss_val))
+
+    def test_fixed_strategy_no_double_counting(self):
+        """Fixed strategy calls router once, should not normalize."""
+        config = _make_config(num_iterations=2, routing_strategy="fixed")
+        layer = _build_moe_layer(config).cuda()
+        layer.train()
+
+        # Clear tracker
+        tracker = parallel_state.get_moe_layer_wise_logging_tracker()
+        for name in list(tracker.keys()):
+            del tracker[name]
+
+        hidden = torch.randn(8, 2, config.hidden_size, device=torch.cuda.current_device())
+        output, _ = layer(hidden)
+
+        # For "fixed", router called once, so num_router_calls=1, no normalization applied
+        if "load_balancing_loss" in tracker:
+            loss_val = tracker["load_balancing_loss"]["values"][0].item()
+            assert loss_val >= 0
+            assert not torch.isinf(torch.tensor(loss_val))

@@ -505,6 +505,13 @@ class TransformerConfig(ModelParallelConfig):
     Applied to iterations 2..N to prevent aux loss from dominating when routing
     is called multiple times. E.g., 0.5 means half-weight aux loss for extra iterations."""
 
+    moe_iteration_norm: bool = True
+    """Whether to apply layer normalization between expert iterations in recursive MoE.
+    When True, a shared LayerNorm/RMSNorm (matching config.normalization) is applied
+    to hidden_states before routing in iterations 1..N-1, preventing distribution drift
+    that degrades routing quality and expert computation. Inspired by Loop Transformer
+    which requires normalization between shared-weight iterations."""
+
     ##################
     # Context Parallel
     ##################

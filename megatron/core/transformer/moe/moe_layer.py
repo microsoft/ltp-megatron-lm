@@ -19,6 +19,13 @@ from megatron.core.transformer.moe.token_dispatcher import (
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.transformer.transformer_config import TransformerConfig
 
+try:
+    from megatron.core.extensions.transformer_engine import TENorm
+
+    HAVE_TE_NORM = True
+except ImportError:
+    HAVE_TE_NORM = False
+
 
 @dataclass
 class MoESubmodules:
@@ -95,6 +102,26 @@ class MoELayer(BaseMoELayer):
         self.iteration_residual = config.moe_iteration_residual
         self.iteration_routing_strategy = config.moe_iteration_routing_strategy
         self.iteration_aux_loss_scale = config.moe_iteration_aux_loss_scale
+        self.iteration_norm_enabled = config.moe_iteration_norm and self.num_iterations > 1
+
+        # Initialize iteration normalization (applied between expert iterations)
+        if self.iteration_norm_enabled:
+            if HAVE_TE_NORM:
+                self.iteration_norm = TENorm(
+                    config, config.hidden_size, eps=config.layernorm_epsilon
+                )
+            else:
+                # Fallback to PyTorch native RMSNorm or LayerNorm
+                if config.normalization == "RMSNorm":
+                    self.iteration_norm = torch.nn.RMSNorm(
+                        config.hidden_size, eps=config.layernorm_epsilon
+                    )
+                else:
+                    self.iteration_norm = torch.nn.LayerNorm(
+                        config.hidden_size, eps=config.layernorm_epsilon
+                    )
+        else:
+            self.iteration_norm = None
 
         # Initialize router(s)
         if self.iteration_routing_strategy == "multi_router" and self.num_iterations > 1:
@@ -216,8 +243,14 @@ class MoELayer(BaseMoELayer):
             fixed_probs = None  # For fixed strategy
             fixed_routing_map = None
             final_mlp_bias = None
+            # Track how many times the router is actually invoked (for metric normalization)
+            num_router_calls = 0
 
             for iteration in range(self.num_iterations):
+                # --- Apply iteration normalization (iteration > 0) ---
+                if iteration > 0 and self.iteration_norm is not None:
+                    hidden_states = self.iteration_norm(hidden_states)
+
                 # --- Set aux loss scale for this iteration ---
                 aux_scale = 1.0 if iteration == 0 else self.iteration_aux_loss_scale
                 
@@ -226,14 +259,17 @@ class MoELayer(BaseMoELayer):
                     # Route only on the first iteration, reuse for subsequent ones
                     if iteration == 0:
                         fixed_probs, fixed_routing_map = self.router(hidden_states)
+                        num_router_calls += 1
                     probs, routing_map = fixed_probs, fixed_routing_map
                 elif self.iteration_routing_strategy == "multi_router":
                     router = self._get_router_for_iteration(iteration)
                     router._aux_loss_scale = aux_scale
                     probs, routing_map = router(hidden_states)
+                    num_router_calls += 1
                 elif self.iteration_routing_strategy == "dedup":
                     self.router._aux_loss_scale = aux_scale
                     probs, routing_map = self.router(hidden_states)
+                    num_router_calls += 1
                     if accumulated_routing_map is not None:
                         routing_map = self._apply_dedup_mask(routing_map, accumulated_routing_map)
                         # Recompute probs: zero out masked positions
@@ -247,6 +283,7 @@ class MoELayer(BaseMoELayer):
                     # "reroute": simply re-invoke the same router with updated hidden_states
                     self.router._aux_loss_scale = aux_scale
                     probs, routing_map = self.router(hidden_states)
+                    num_router_calls += 1
 
                 # --- Expert computation (permute → experts → unpermute) ---
                 (dispatched_input, tokens_per_expert) = self.token_dispatcher.token_permutation(
@@ -270,6 +307,25 @@ class MoELayer(BaseMoELayer):
             # Apply shared expert once at the end (not per iteration)
             if self.use_shared_expert and not self.shared_expert_overlap:
                 hidden_states = hidden_states + self.shared_experts(original_hidden_states)
+
+            # --- Normalize accumulated tracker metrics ---
+            # Router calls accumulate aux_loss and tokens_per_expert via += into the
+            # same layer_number slot in the global tracker. When the router is called
+            # N times (reroute/dedup/multi_router), we need to average the tracked
+            # values so that logged metrics are comparable to baseline (single-call) MoE.
+            if num_router_calls > 1 and self.training and self.layer_number is not None:
+                tracker = parallel_state.get_moe_layer_wise_logging_tracker()
+                idx = self.layer_number - 1
+                for name in list(tracker.keys()):
+                    if name in ("load_balancing_loss", "z_loss") or "tokens_per_expert" in name:
+                        if tracker[name]["values"].shape[0] > idx:
+                            tracker[name]["values"][idx] /= num_router_calls
+
+            # --- Normalize expert_bias local_tokens_per_expert ---
+            # For reroute/dedup, the same router's local_tokens_per_expert gets
+            # accumulated N times. Normalize so expert bias updates see per-call averages.
+            if num_router_calls > 1 and self.router.local_tokens_per_expert is not None:
+                self.router.local_tokens_per_expert /= num_router_calls
 
             return hidden_states, final_mlp_bias
 
