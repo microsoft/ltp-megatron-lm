@@ -508,9 +508,19 @@ class TransformerConfig(ModelParallelConfig):
     moe_iteration_norm: bool = True
     """Whether to apply layer normalization between expert iterations in recursive MoE.
     When True, a shared LayerNorm/RMSNorm (matching config.normalization) is applied
-    to hidden_states before routing in iterations 1..N-1, preventing distribution drift
-    that degrades routing quality and expert computation. Inspired by Loop Transformer
-    which requires normalization between shared-weight iterations."""
+    to routing_input before routing in iterations 1..N-1, preventing distribution drift
+    that degrades routing quality and expert computation."""
+
+    moe_iteration_scaling: str = "uniform"
+    """Scaling strategy for expert outputs across iterations.
+    'none': No scaling, each iteration's output is added at full scale.
+    'uniform': Each iteration output is scaled by 1/N (preserves output magnitude).
+    'learned_gate': Per-iteration learnable scalar gates, initialized to 1/N."""
+
+    moe_iteration_embedding: bool = False
+    """Whether to add a learnable per-iteration embedding to routing_input before routing.
+    This allows the shared router and experts to behave differently at each iteration,
+    making them iteration-aware without separate parameters per iteration."""
 
     ##################
     # Context Parallel
@@ -741,6 +751,12 @@ class TransformerConfig(ModelParallelConfig):
                 f'moe_iteration_routing_strategy must be one of '
                 f'"reroute", "multi_router", "dedup", "fixed", '
                 f'got {self.moe_iteration_routing_strategy}'
+            )
+        if self.moe_iteration_scaling not in ["none", "uniform", "learned_gate"]:
+            raise ValueError(
+                f'moe_iteration_scaling must be one of '
+                f'"none", "uniform", "learned_gate", '
+                f'got {self.moe_iteration_scaling}'
             )
         if self.moe_num_iterations > 1 and self.moe_shared_expert_overlap:
             warnings.warn(

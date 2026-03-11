@@ -103,6 +103,7 @@ class MoELayer(BaseMoELayer):
         self.iteration_routing_strategy = config.moe_iteration_routing_strategy
         self.iteration_aux_loss_scale = config.moe_iteration_aux_loss_scale
         self.iteration_norm_enabled = config.moe_iteration_norm and self.num_iterations > 1
+        self.iteration_scaling = config.moe_iteration_scaling
 
         # Initialize iteration normalization (applied between expert iterations)
         if self.iteration_norm_enabled:
@@ -122,6 +123,25 @@ class MoELayer(BaseMoELayer):
                     )
         else:
             self.iteration_norm = None
+
+        # Initialize iteration embedding (iteration-aware expert computation)
+        if config.moe_iteration_embedding and self.num_iterations > 1:
+            self.iteration_embedding = torch.nn.Parameter(
+                torch.zeros(self.num_iterations, config.hidden_size)
+            )
+            # Small initialization so it doesn't dominate at start
+            torch.nn.init.normal_(self.iteration_embedding, mean=0.0, std=0.02)
+        else:
+            self.iteration_embedding = None
+
+        # Initialize learnable output gate (per-iteration scaling)
+        if self.iteration_scaling == "learned_gate" and self.num_iterations > 1:
+            # Initialize all gates to 1/N so total contribution starts at ~1.0
+            self.iteration_gate = torch.nn.Parameter(
+                torch.full((self.num_iterations,), 1.0 / self.num_iterations)
+            )
+        else:
+            self.iteration_gate = None
 
         # Initialize router(s)
         if self.iteration_routing_strategy == "multi_router" and self.num_iterations > 1:
@@ -194,20 +214,42 @@ class MoELayer(BaseMoELayer):
         else:
             return self.router
 
-    def _apply_dedup_mask(self, routing_map, accumulated_routing_map):
-        """For 'dedup' strategy: mask out (token, expert) pairs already selected in prior iterations.
+    def _apply_dedup_mask(self, probs, routing_map, accumulated_routing_map):
+        """For 'dedup' strategy: mask out (token, expert) pairs already selected
+        in prior iterations and renormalize the routing probabilities.
 
         Args:
+            probs: Routing probabilities [num_tokens, num_experts].
             routing_map: Current routing map [num_tokens, num_experts] (bool).
             accumulated_routing_map: Union of all prior routing maps [num_tokens, num_experts] (bool).
 
         Returns:
-            Modified routing_map with previously-selected pairs masked out.
+            Tuple of (modified probs, modified routing_map).
         """
         # Mask out experts already selected in prior iterations
         dedup_mask = ~accumulated_routing_map  # True for NOT-yet-selected
         routing_map = routing_map & dedup_mask
-        return routing_map
+
+        # Zero out masked positions in probs
+        probs = probs * routing_map
+
+        # Renormalize probs so probability mass is preserved per token.
+        # This prevents weakened expert contributions when some top-k slots are masked.
+        prob_sum = probs.sum(dim=-1, keepdim=True)
+        probs = probs / (prob_sum + 1e-20)
+
+        return probs, routing_map
+
+    def _get_output_scale(self, iteration: int):
+        """Get the output scaling factor for a given iteration."""
+        if self.iteration_scaling == "uniform":
+            return 1.0 / self.num_iterations
+        elif self.iteration_scaling == "learned_gate":
+            # Return the learned gate value (used as tensor for gradient flow)
+            return self.iteration_gate[iteration]
+        else:
+            # "none" — no scaling
+            return 1.0
 
     def forward(self, hidden_states: torch.Tensor):
         if (
@@ -237,82 +279,98 @@ class MoELayer(BaseMoELayer):
                 return output, mlp_bias
 
             # ============ Recursive MoE path ============
-            # Save original input for shared expert (applied once at the end)
-            original_hidden_states = hidden_states
+            # KEY DESIGN: Separate "routing_input" (evolves for routing decisions)
+            # from "accumulated_delta" (pure expert output to return).
+            #
+            # TransformerLayer does: output = residual + MoE(norm(residual))
+            # So MoE must return only the expert delta, NOT the input itself.
+            # routing_input evolves so later iterations can make informed routing
+            # decisions based on prior expert outputs.
+            original_hidden_states = hidden_states  # For shared expert
+            routing_input = hidden_states  # Evolves across iterations for routing
+            accumulated_delta = torch.zeros_like(hidden_states)  # Pure expert output
+
             accumulated_routing_map = None  # For dedup strategy
             fixed_probs = None  # For fixed strategy
             fixed_routing_map = None
             final_mlp_bias = None
-            # Track how many times the router is actually invoked (for metric normalization)
             num_router_calls = 0
 
             for iteration in range(self.num_iterations):
                 # --- Apply iteration normalization (iteration > 0) ---
                 if iteration > 0 and self.iteration_norm is not None:
-                    hidden_states = self.iteration_norm(hidden_states)
+                    routing_input = self.iteration_norm(routing_input)
+
+                # --- Apply iteration embedding (iteration-aware) ---
+                if self.iteration_embedding is not None:
+                    current_routing_input = routing_input + self.iteration_embedding[iteration]
+                else:
+                    current_routing_input = routing_input
 
                 # --- Set aux loss scale for this iteration ---
                 aux_scale = 1.0 if iteration == 0 else self.iteration_aux_loss_scale
-                
+
                 # --- Routing ---
                 if self.iteration_routing_strategy == "fixed":
-                    # Route only on the first iteration, reuse for subsequent ones
                     if iteration == 0:
-                        fixed_probs, fixed_routing_map = self.router(hidden_states)
+                        fixed_probs, fixed_routing_map = self.router(current_routing_input)
                         num_router_calls += 1
                     probs, routing_map = fixed_probs, fixed_routing_map
                 elif self.iteration_routing_strategy == "multi_router":
                     router = self._get_router_for_iteration(iteration)
                     router._aux_loss_scale = aux_scale
-                    probs, routing_map = router(hidden_states)
+                    probs, routing_map = router(current_routing_input)
                     num_router_calls += 1
                 elif self.iteration_routing_strategy == "dedup":
                     self.router._aux_loss_scale = aux_scale
-                    probs, routing_map = self.router(hidden_states)
+                    probs, routing_map = self.router(current_routing_input)
                     num_router_calls += 1
                     if accumulated_routing_map is not None:
-                        routing_map = self._apply_dedup_mask(routing_map, accumulated_routing_map)
-                        # Recompute probs: zero out masked positions
-                        probs = probs * routing_map
-                    # Track which (token, expert) pairs have been used
+                        probs, routing_map = self._apply_dedup_mask(
+                            probs, routing_map, accumulated_routing_map
+                        )
                     if accumulated_routing_map is None:
                         accumulated_routing_map = routing_map.clone()
                     else:
                         accumulated_routing_map = accumulated_routing_map | routing_map
                 else:
-                    # "reroute": simply re-invoke the same router with updated hidden_states
+                    # "reroute"
                     self.router._aux_loss_scale = aux_scale
-                    probs, routing_map = self.router(hidden_states)
+                    probs, routing_map = self.router(current_routing_input)
                     num_router_calls += 1
 
                 # --- Expert computation (permute → experts → unpermute) ---
+                # Expert sees routing_input (not the one with iteration embedding)
                 (dispatched_input, tokens_per_expert) = self.token_dispatcher.token_permutation(
-                    hidden_states, probs, routing_map
+                    routing_input, probs, routing_map
                 )
                 expert_output, mlp_bias = self.experts(dispatched_input, tokens_per_expert)
                 output, mlp_bias = self.token_dispatcher.token_unpermutation(
                     expert_output, mlp_bias
                 )
 
-                # --- Residual connection ---
+                # --- Output scaling ---
+                scale = self._get_output_scale(iteration)
+                scaled_output = output * scale
+
+                # --- Accumulate delta (always add to delta) ---
+                accumulated_delta = accumulated_delta + scaled_output
+
+                # --- Update routing_input for next iteration ---
                 if self.iteration_residual == "add":
-                    hidden_states = hidden_states + output
+                    routing_input = routing_input + output
                 else:
                     # "replace"
-                    hidden_states = output
+                    routing_input = output
 
                 if mlp_bias is not None:
-                    final_mlp_bias = mlp_bias  # keep the last one
+                    final_mlp_bias = mlp_bias
 
             # Apply shared expert once at the end (not per iteration)
             if self.use_shared_expert and not self.shared_expert_overlap:
-                hidden_states = hidden_states + self.shared_experts(original_hidden_states)
+                accumulated_delta = accumulated_delta + self.shared_experts(original_hidden_states)
 
             # --- Normalize accumulated tracker metrics ---
-            # Router calls accumulate aux_loss and tokens_per_expert via += into the
-            # same layer_number slot in the global tracker. When the router is called
-            # N times (reroute/dedup/multi_router), we need to average the tracked
-            # values so that logged metrics are comparable to baseline (single-call) MoE.
             if num_router_calls > 1 and self.training and self.layer_number is not None:
                 tracker = parallel_state.get_moe_layer_wise_logging_tracker()
                 idx = self.layer_number - 1
@@ -322,12 +380,10 @@ class MoELayer(BaseMoELayer):
                             tracker[name]["values"][idx] /= num_router_calls
 
             # --- Normalize expert_bias local_tokens_per_expert ---
-            # For reroute/dedup, the same router's local_tokens_per_expert gets
-            # accumulated N times. Normalize so expert bias updates see per-call averages.
             if num_router_calls > 1 and self.router.local_tokens_per_expert is not None:
                 self.router.local_tokens_per_expert /= num_router_calls
 
-            return hidden_states, final_mlp_bias
+            return accumulated_delta, final_mlp_bias
 
         if self.moe_layer_recompute:
             output, mlp_bias = tensor_parallel.checkpoint(custom_forward, False, hidden_states)

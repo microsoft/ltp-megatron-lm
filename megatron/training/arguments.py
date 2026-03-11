@@ -2654,11 +2654,17 @@ def _add_moe_args(parser):
                        help='Scaling factor for auxiliary loss from additional routing iterations '
                        '(iterations 2..N). Prevents aux loss from dominating with multiple routes.')
     group.add_argument('--moe-iteration-norm', action='store_true', default=True,
-                       help='Apply LayerNorm/RMSNorm between expert iterations in recursive MoE. '
-                       'Prevents hidden state distribution drift across iterations. '
-                       'Uses the same normalization type as the rest of the model (config.normalization).')
+                       help='Apply LayerNorm/RMSNorm between expert iterations in recursive MoE.')
     group.add_argument('--no-moe-iteration-norm', dest='moe_iteration_norm', action='store_false',
                        help='Disable normalization between expert iterations in recursive MoE.')
+    group.add_argument('--moe-iteration-scaling', type=str, default='uniform',
+                       choices=['none', 'uniform', 'learned_gate'],
+                       help='Scaling strategy for expert outputs across iterations. '
+                       '"none": no scaling. "uniform": scale by 1/N. '
+                       '"learned_gate": learnable per-iteration scalar gates.')
+    group.add_argument('--moe-iteration-embedding', action='store_true', default=False,
+                       help='Add learnable per-iteration embedding to routing input. '
+                       'Makes shared router/experts iteration-aware.')
 
     return parser
 
