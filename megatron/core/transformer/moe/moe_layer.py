@@ -9,6 +9,10 @@ import torch
 from megatron.core import parallel_state, tensor_parallel
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.moe.legacy_a2a_token_dispatcher import MoEAlltoAllSEQTokenDispatcher
+from megatron.core.transformer.moe.moe_utils import (
+    save_to_aux_losses_tracker,
+    save_to_tokens_per_expert_tracker,
+)
 from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.transformer.moe.token_dispatcher import (
     MoEAllGatherTokenDispatcher,
@@ -296,6 +300,20 @@ class MoELayer(BaseMoELayer):
             final_mlp_bias = None
             num_router_calls = 0
 
+            # --- Iteration diagnostics state ---
+            diagnostics_enabled = (
+                self.config.moe_iteration_diagnostics
+                and self.num_iterations > 1
+                and self.training
+                and torch.is_grad_enabled()
+                and self.layer_number is not None
+            )
+            prev_routing_map = None
+            prev_logits = None
+            diag_overlap_sum = 0.0
+            diag_kl_sum = 0.0
+            diag_pair_count = 0
+
             for iteration in range(self.num_iterations):
                 # --- Apply iteration normalization (iteration > 0) ---
                 if iteration > 0 and self.iteration_norm is not None:
@@ -339,11 +357,62 @@ class MoELayer(BaseMoELayer):
                     probs, routing_map = self.router(current_routing_input)
                     num_router_calls += 1
 
+                # --- Iteration diagnostics (after routing, before expert computation) ---
+                if diagnostics_enabled:
+                    router_for_iter = self._get_router_for_iteration(iteration)
+                    curr_logits = router_for_iter._last_logits
+
+                    with torch.no_grad():
+                        # Metric: per-iteration routing entropy
+                        if curr_logits is not None:
+                            full_probs = torch.softmax(curr_logits.float(), dim=-1)
+                            entropy = -(full_probs * torch.log(full_probs + 1e-12)).sum(dim=-1).mean()
+                            save_to_aux_losses_tracker(
+                                f"iter_diag_entropy_iter_{iteration}",
+                                entropy,
+                                self.layer_number,
+                                self.config.num_layers,
+                            )
+
+                        # Metric: expert overlap rate (iteration > 0)
+                        if prev_routing_map is not None:
+                            overlap = (
+                                (prev_routing_map & routing_map).float().sum(dim=-1).mean()
+                                / self.router.topk
+                            )
+                            diag_overlap_sum += overlap.item()
+
+                        # Metric: KL divergence between consecutive iterations
+                        if prev_logits is not None and curr_logits is not None:
+                            p = torch.softmax(prev_logits.float(), dim=-1)
+                            q = full_probs  # already computed above
+                            kl = (p * (torch.log(p + 1e-12) - torch.log(q + 1e-12))).sum(dim=-1).mean()
+                            diag_kl_sum += kl.item()
+                            diag_pair_count += 1
+
+                        # Store for next iteration comparison
+                        prev_routing_map = routing_map.detach().clone()
+                        prev_logits = curr_logits
+
                 # --- Expert computation (permute → experts → unpermute) ---
                 # Expert sees routing_input (not the one with iteration embedding)
                 (dispatched_input, tokens_per_expert) = self.token_dispatcher.token_permutation(
                     routing_input, probs, routing_map
                 )
+
+                # Metric: per-iteration tokens per expert
+                if diagnostics_enabled:
+                    tpe_device = tokens_per_expert
+                    if not tpe_device.is_cuda:
+                        tpe_device = tpe_device.to(device=hidden_states.device)
+                    save_to_tokens_per_expert_tracker(
+                        f"iter_{iteration}_tokens_per_expert",
+                        tpe_device,
+                        self.layer_number,
+                        self.config.num_layers,
+                        reduce_group=parallel_state.get_data_parallel_group(),
+                    )
+
                 expert_output, mlp_bias = self.experts(dispatched_input, tokens_per_expert)
                 output, mlp_bias = self.token_dispatcher.token_unpermutation(
                     expert_output, mlp_bias
@@ -370,18 +439,24 @@ class MoELayer(BaseMoELayer):
             if self.use_shared_expert and not self.shared_expert_overlap:
                 accumulated_delta = accumulated_delta + self.shared_experts(original_hidden_states)
 
-            # --- Normalize accumulated tracker metrics ---
-            if num_router_calls > 1 and self.training and self.layer_number is not None:
-                tracker = parallel_state.get_moe_layer_wise_logging_tracker()
-                idx = self.layer_number - 1
-                for name in list(tracker.keys()):
-                    if name in ("load_balancing_loss", "z_loss") or "tokens_per_expert" in name:
-                        if tracker[name]["values"].shape[0] > idx:
-                            tracker[name]["values"][idx] /= num_router_calls
+            # --- Write aggregated diagnostic metrics ---
+            if diagnostics_enabled and diag_pair_count > 0:
+                save_to_aux_losses_tracker(
+                    "iter_diag_expert_overlap",
+                    torch.tensor(diag_overlap_sum / diag_pair_count, device=hidden_states.device),
+                    self.layer_number,
+                    self.config.num_layers,
+                )
+                save_to_aux_losses_tracker(
+                    "iter_diag_kl_div",
+                    torch.tensor(diag_kl_sum / diag_pair_count, device=hidden_states.device),
+                    self.layer_number,
+                    self.config.num_layers,
+                )
 
-            # --- Normalize expert_bias local_tokens_per_expert ---
-            if num_router_calls > 1 and self.router.local_tokens_per_expert is not None:
-                self.router.local_tokens_per_expert /= num_router_calls
+            # NOTE: Tracker normalization for load_balancing_loss, z_loss, and
+            # tokens_per_expert is NOT done here. It is done once per training step
+            # in track_moe_metrics() to avoid compounding division across microbatches.
 
             return accumulated_delta, final_mlp_bias
 

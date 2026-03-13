@@ -710,6 +710,7 @@ def track_moe_metrics(
     track_names: Optional[List[str]] = None,
     num_layers: Optional[int] = None,
     moe_layer_freq: Optional[Union[int, List[int]]] = None,
+    moe_num_iterations: int = 1,
 ):
     """Track the MoE metrics for logging."""
     # Aux loss logging
@@ -739,6 +740,13 @@ def track_moe_metrics(
 
     if writer is not None or wandb_writer is not None:
         aux_losses = {k: v['values'].float() * loss_scale for k, v in tracker.items() if 'loss' in k}
+
+        # Normalize aux losses by moe_num_iterations (once per step, not per microbatch)
+        if moe_num_iterations > 1:
+            for k in aux_losses:
+                if 'iter_diag' not in k:
+                    aux_losses[k] = aux_losses[k] / moe_num_iterations
+
         for name, loss_list in aux_losses.items():
             if total_loss_dict is not None:
                 if name not in total_loss_dict:
@@ -755,21 +763,66 @@ def track_moe_metrics(
                     for i, loss in enumerate(loss_list.tolist()):
                         writer.add_scalar(f"moe/{name}_layer_{i}", loss, iteration)
 
-            # W&B logging lacks support for logging multiple scalars simultaneously.
-            # As a workaround, we log each scalar individually first, then we can create
-            # a custom panel to manually group them to a single plot.
+            # W&B: per-layer LBL goes to "LBL/" folder, others to "moe/"
             if wandb_writer:
                 wandb_writer.log({f"{name}": loss_list.sum() / num_moe_layers}, iteration)
                 if per_layer_logging:
+                    if name == "load_balancing_loss":
+                        folder = "LBL"
+                    else:
+                        folder = "moe"
                     wandb_writer.log(
                         {
-                            f"moe/{name}_layer_{i}": loss
+                            f"{folder}/{name}_layer_{i}": loss
                             for i, loss in enumerate(loss_list.tolist())
                         },
                         iteration,
                     )
         # --- Log token metrics ---
-        token_metrics = {k: v['values'].float() for k, v in tracker.items() if 'tokens_per_expert' in k}
+        token_metrics = {
+            k: v['values'].float() for k, v in tracker.items()
+            if 'tokens_per_expert' in k and 'iter_diag' not in k and not k.startswith('iter_')
+        }
+
+        # Normalize token metrics by moe_num_iterations (once per step, not per microbatch)
+        if moe_num_iterations > 1:
+            for k in token_metrics:
+                token_metrics[k] = token_metrics[k] / moe_num_iterations
+
+        # --- Log iteration diagnostic scalars (NOT scaled by loss_scale) ---
+        diag_metrics = {k: v['values'].float() for k, v in tracker.items() if 'iter_diag' in k}
+        # Per-iteration tokens_per_expert (iter_0_tokens_per_expert, etc.)
+        diag_token_metrics = {
+            k: v['values'].float() for k, v in tracker.items()
+            if k.startswith('iter_') and 'tokens_per_expert' in k
+        }
+        for name, metric_list in diag_metrics.items():
+            mean_value = metric_list.mean()
+            if writer:
+                writer.add_scalar(f"moe_diag/{name}", mean_value, iteration)
+                if per_layer_logging:
+                    for i, val in enumerate(metric_list.tolist()):
+                        writer.add_scalar(f"moe_diag/{name}_layer_{i}", val, iteration)
+            if wandb_writer:
+                wandb_writer.log({f"moe_diag/{name}": mean_value}, iteration)
+                if per_layer_logging:
+                    wandb_writer.log(
+                        {
+                            f"moe_diag/{name}_layer_{i}": val
+                            for i, val in enumerate(metric_list.tolist())
+                        },
+                        iteration,
+                    )
+        # Per-iteration token metrics (iter_0_tokens_per_expert, etc.)
+        for name, metric_list in diag_token_metrics.items():
+            # metric_list shape: [num_layers, num_experts]
+            per_layer_mean = metric_list.mean(dim=1)
+            overall_mean = per_layer_mean.mean()
+            if writer:
+                writer.add_scalar(f"moe_diag/{name}_mean", overall_mean, iteration)
+            if wandb_writer:
+                wandb_writer.log({f"moe_diag/{name}_mean": overall_mean}, iteration)
+
         token_stat_metrics = {}
         # Compute per-layer stats across experts, it will calculate the max, mean,
         # and min values across the experts for that layer.
@@ -789,12 +842,21 @@ def track_moe_metrics(
                     for i, val in enumerate(metric_list.tolist()):
                         writer.add_scalar(f"moe/{name}_layer_{i}", val, iteration)
 
-            # W&B
+            # W&B: route per-layer stats to dedicated folders
             if wandb_writer:
                 wandb_writer.log({f"{name}": mean_value}, iteration)
                 if per_layer_logging:
+                    # Determine W&B folder based on stat type
+                    if name.endswith('_max'):
+                        folder = "Seq_aux_tokens_max"
+                    elif name.endswith('_min'):
+                        folder = "Seq_aux_tokens_min"
+                    elif name.endswith('_mean'):
+                        folder = "Seq_aux_tokens_mean"
+                    else:
+                        folder = "moe"
                     wandb_writer.log(
-                        {f"moe/{name}_layer_{i}": val for i, val in enumerate(metric_list.tolist())},
+                        {f"{folder}/{name}_layer_{i}": val for i, val in enumerate(metric_list.tolist())},
                         iteration,
                     )
     clear_aux_losses_tracker()

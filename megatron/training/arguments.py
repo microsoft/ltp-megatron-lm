@@ -2665,6 +2665,11 @@ def _add_moe_args(parser):
     group.add_argument('--moe-iteration-embedding', action='store_true', default=False,
                        help='Add learnable per-iteration embedding to routing input. '
                        'Makes shared router/experts iteration-aware.')
+    group.add_argument('--moe-iteration-diagnostics', action='store_true', default=False,
+                       help='Enable diagnostic metrics for recursive MoE iterations: '
+                       'expert overlap rate, routing entropy, KL divergence, and '
+                       'per-iteration tokens-per-expert. Only meaningful with '
+                       '--moe-num-iterations >= 2.')
 
     return parser
 

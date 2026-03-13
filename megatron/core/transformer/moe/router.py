@@ -133,6 +133,8 @@ class TopKRouter(Router):
         self.input_jitter = None
         # Temporary aux loss scale factor for recursive MoE iterations
         self._aux_loss_scale = 1.0
+        # For iteration diagnostics: stores logits from last forward call
+        self._last_logits = None
 
         self.enable_expert_bias = self.config.moe_router_enable_expert_bias
         if self.enable_expert_bias:
@@ -533,6 +535,9 @@ class TopKRouter(Router):
         # Apply input jitter
         input = self.apply_input_jitter(input)
         logits = self.gating(input)
+
+        # Store logits for iteration diagnostics (read by MoELayer)
+        self._last_logits = logits.detach() if self.config.moe_iteration_diagnostics else None
 
         scores, routing_map = self.routing(logits)
 

@@ -522,6 +522,12 @@ class TransformerConfig(ModelParallelConfig):
     This allows the shared router and experts to behave differently at each iteration,
     making them iteration-aware without separate parameters per iteration."""
 
+    moe_iteration_diagnostics: bool = False
+    """Enable diagnostic metrics for recursive MoE iterations.
+    When enabled, logs expert overlap rate, routing entropy, KL divergence between
+    consecutive iterations, and per-iteration tokens-per-expert distributions.
+    Only meaningful when moe_num_iterations >= 2. Gated to avoid overhead when disabled."""
+
     ##################
     # Context Parallel
     ##################

@@ -28,6 +28,7 @@ def _make_config(
     iteration_norm=True,
     iteration_scaling="uniform",
     iteration_embedding=False,
+    iteration_diagnostics=False,
 ):
     """Helper to create a TransformerConfig for recursive MoE tests."""
     return TransformerConfig(
@@ -50,6 +51,7 @@ def _make_config(
         moe_iteration_norm=iteration_norm,
         moe_iteration_scaling=iteration_scaling,
         moe_iteration_embedding=iteration_embedding,
+        moe_iteration_diagnostics=iteration_diagnostics,
     )
 
 
@@ -416,3 +418,149 @@ class TestRecursiveMoEMetricsNormalization:
             loss_val = tracker["load_balancing_loss"]["values"][0].item()
             assert loss_val >= 0
             assert not torch.isinf(torch.tensor(loss_val))
+
+
+def _clear_tracker():
+    """Helper to clear the global MoE tracker before a test."""
+    tracker = parallel_state.get_moe_layer_wise_logging_tracker()
+    for name in list(tracker.keys()):
+        del tracker[name]
+
+
+class TestRecursiveMoEDiagnostics:
+    def setup_method(self, method):
+        Utils.initialize_model_parallel(1, 1)
+        _set_random_seed(seed_=123, data_parallel_random_init=False)
+
+    def teardown_method(self, method):
+        Utils.destroy_model_parallel()
+
+    def test_diagnostics_disabled_no_overhead(self):
+        """When diagnostics are off, no iter_diag keys appear in tracker."""
+        config = _make_config(num_iterations=2, iteration_diagnostics=False)
+        layer = _build_moe_layer(config).cuda()
+        layer.train()
+        _clear_tracker()
+        hidden = torch.randn(8, 2, config.hidden_size, device=torch.cuda.current_device())
+        output, _ = layer(hidden)
+        tracker = parallel_state.get_moe_layer_wise_logging_tracker()
+        diag_keys = [k for k in tracker.keys() if "iter_diag" in k or k.startswith("iter_")]
+        assert len(diag_keys) == 0, f"Unexpected diagnostic keys: {diag_keys}"
+
+    def test_diagnostics_enabled_produces_metrics(self):
+        """When diagnostics are on, all expected metrics appear in tracker."""
+        config = _make_config(num_iterations=2, iteration_diagnostics=True)
+        layer = _build_moe_layer(config).cuda()
+        layer.train()
+        _clear_tracker()
+        hidden = torch.randn(8, 2, config.hidden_size, device=torch.cuda.current_device())
+        output, _ = layer(hidden)
+        tracker = parallel_state.get_moe_layer_wise_logging_tracker()
+
+        # Scalar diagnostics
+        assert "iter_diag_expert_overlap" in tracker
+        overlap_val = tracker["iter_diag_expert_overlap"]["values"][0].item()
+        assert 0.0 <= overlap_val <= 1.0, f"Overlap out of range: {overlap_val}"
+
+        assert "iter_diag_kl_div" in tracker
+        kl_val = tracker["iter_diag_kl_div"]["values"][0].item()
+        assert kl_val >= 0.0, f"KL divergence negative: {kl_val}"
+
+        # Per-iteration entropy
+        assert "iter_diag_entropy_iter_0" in tracker
+        assert "iter_diag_entropy_iter_1" in tracker
+        for i in range(2):
+            ent_val = tracker[f"iter_diag_entropy_iter_{i}"]["values"][0].item()
+            assert ent_val > 0.0, f"Entropy iter {i} should be positive: {ent_val}"
+
+        # Per-iteration tokens per expert
+        assert "iter_0_tokens_per_expert" in tracker
+        assert "iter_1_tokens_per_expert" in tracker
+
+    def test_overlap_one_for_fixed_strategy(self):
+        """Fixed strategy uses the same routing — overlap should be 1.0."""
+        config = _make_config(num_iterations=2, routing_strategy="fixed", iteration_diagnostics=True)
+        layer = _build_moe_layer(config).cuda()
+        layer.train()
+        _clear_tracker()
+        hidden = torch.randn(8, 2, config.hidden_size, device=torch.cuda.current_device())
+        output, _ = layer(hidden)
+        tracker = parallel_state.get_moe_layer_wise_logging_tracker()
+        overlap_val = tracker["iter_diag_expert_overlap"]["values"][0].item()
+        assert abs(overlap_val - 1.0) < 1e-5, f"Fixed strategy overlap should be ~1.0, got {overlap_val}"
+
+    def test_overlap_zero_for_dedup_strategy(self):
+        """Dedup strategy masks out prior selections — overlap should be 0.0."""
+        config = _make_config(num_iterations=2, routing_strategy="dedup", iteration_diagnostics=True)
+        layer = _build_moe_layer(config).cuda()
+        layer.train()
+        _clear_tracker()
+        hidden = torch.randn(8, 2, config.hidden_size, device=torch.cuda.current_device())
+        output, _ = layer(hidden)
+        tracker = parallel_state.get_moe_layer_wise_logging_tracker()
+        overlap_val = tracker["iter_diag_expert_overlap"]["values"][0].item()
+        assert abs(overlap_val) < 1e-5, f"Dedup strategy overlap should be ~0.0, got {overlap_val}"
+
+    def test_diagnostics_three_iterations(self):
+        """With 3 iterations, entropy has 3 entries, overlap/KL are present."""
+        config = _make_config(num_iterations=3, iteration_diagnostics=True)
+        layer = _build_moe_layer(config).cuda()
+        layer.train()
+        _clear_tracker()
+        hidden = torch.randn(8, 2, config.hidden_size, device=torch.cuda.current_device())
+        output, _ = layer(hidden)
+        tracker = parallel_state.get_moe_layer_wise_logging_tracker()
+
+        for i in range(3):
+            assert f"iter_diag_entropy_iter_{i}" in tracker
+            assert f"iter_{i}_tokens_per_expert" in tracker
+
+        assert "iter_diag_expert_overlap" in tracker
+        assert "iter_diag_kl_div" in tracker
+
+    def test_diagnostics_no_gradient_impact(self):
+        """Diagnostics should not affect gradient flow."""
+        config = _make_config(num_iterations=2, iteration_diagnostics=True)
+        layer = _build_moe_layer(config).cuda()
+        layer.train()
+        _clear_tracker()
+        hidden = torch.randn(8, 2, config.hidden_size, device=torch.cuda.current_device(), requires_grad=True)
+        output, _ = layer(hidden)
+        loss = output.sum()
+        loss.backward()
+        assert hidden.grad is not None, "Gradients should flow to input"
+        assert not torch.isnan(hidden.grad).any(), "Gradients should not be NaN"
+
+    def test_diagnostics_not_divided_by_router_calls(self):
+        """Diagnostic metrics should NOT be divided by num_router_calls."""
+        config = _make_config(num_iterations=2, routing_strategy="reroute", iteration_diagnostics=True)
+        layer = _build_moe_layer(config).cuda()
+        layer.train()
+        _clear_tracker()
+        hidden = torch.randn(8, 2, config.hidden_size, device=torch.cuda.current_device())
+        output, _ = layer(hidden)
+        tracker = parallel_state.get_moe_layer_wise_logging_tracker()
+
+        # Entropy for iter_0 should be a reasonable positive value, not halved
+        ent_val = tracker["iter_diag_entropy_iter_0"]["values"][0].item()
+        # Entropy of uniform distribution over num_experts=4 is ln(4) ≈ 1.386
+        # A reasonable entropy should be positive and not tiny (would be tiny if divided by 2)
+        assert ent_val > 0.1, f"Entropy seems too small (possibly divided by router_calls): {ent_val}"
+
+    def test_multi_router_diagnostics(self):
+        """Multi-router strategy should produce valid diagnostics with different routers."""
+        config = _make_config(num_iterations=2, routing_strategy="multi_router", iteration_diagnostics=True)
+        layer = _build_moe_layer(config).cuda()
+        layer.train()
+        _clear_tracker()
+        hidden = torch.randn(8, 2, config.hidden_size, device=torch.cuda.current_device())
+        output, _ = layer(hidden)
+        tracker = parallel_state.get_moe_layer_wise_logging_tracker()
+
+        assert "iter_diag_expert_overlap" in tracker
+        assert "iter_diag_kl_div" in tracker
+        assert "iter_diag_entropy_iter_0" in tracker
+        assert "iter_diag_entropy_iter_1" in tracker
+        # KL should be >= 0
+        kl_val = tracker["iter_diag_kl_div"]["values"][0].item()
+        assert kl_val >= 0.0

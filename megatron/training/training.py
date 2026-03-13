@@ -1491,8 +1491,8 @@ def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_r
                 writer.add_scalar(f'grad-norm-{key} vs samples', grad_norm_value,
                                   args.consumed_train_samples)
                 if wandb_writer:
-                    wandb_writer.log({f'grad-norm-{key}': grad_norm_value}, iteration)
-                    wandb_writer.log({f'grad-norm-with-scale-{key}': grad_norm_value * loss_scale}, iteration)
+                    wandb_writer.log({f'Grad_norms/grad-norm-{key}': grad_norm_value}, iteration)
+                    wandb_writer.log({f'Grad_norms_with_scale/grad-norm-with-scale-{key}': grad_norm_value * loss_scale}, iteration)
         if num_zeros_in_grad is not None:
             writer.add_scalar('num-zeros', num_zeros_in_grad, iteration)
             writer.add_scalar('num-zeros vs samples', num_zeros_in_grad,
@@ -1543,6 +1543,11 @@ def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_r
                 track_names.append("global_batch_tokens_per_expert")
         if args.moe_z_loss_coeff is not None:
             track_names.append("z_loss")
+        if getattr(args, 'moe_iteration_diagnostics', False) and getattr(args, 'moe_num_iterations', 1) >= 2:
+            track_names.extend(["iter_diag_expert_overlap", "iter_diag_kl_div"])
+            for i in range(args.moe_num_iterations):
+                track_names.append(f"iter_diag_entropy_iter_{i}")
+                track_names.append(f"iter_{i}_tokens_per_expert")
         track_moe_metrics(
             loss_scale=moe_loss_scale,
             iteration=iteration,
@@ -1553,7 +1558,8 @@ def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_r
             force_initialize=True,
             track_names=track_names,
             num_layers=args.num_layers,
-            moe_layer_freq=args.moe_layer_freq
+            moe_layer_freq=args.moe_layer_freq,
+            moe_num_iterations=getattr(args, 'moe_num_iterations', 1),
         )
     if args.mtp_num_layers is not None:
         mtp_loss_scale = 1 / get_num_microbatches()
