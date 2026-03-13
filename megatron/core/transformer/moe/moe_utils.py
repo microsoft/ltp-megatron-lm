@@ -790,10 +790,10 @@ def track_moe_metrics(
                 token_metrics[k] = token_metrics[k] / moe_num_iterations
 
         # --- Log iteration diagnostic scalars (NOT scaled by loss_scale) ---
-        diag_metrics = {k: v['values'].float() for k, v in tracker.items() if 'iter_diag' in k}
+        diag_metrics = {k: v['values'].float() * loss_scale for k, v in tracker.items() if 'iter_diag' in k}
         # Per-iteration tokens_per_expert (iter_0_tokens_per_expert, etc.)
         diag_token_metrics = {
-            k: v['values'].float() for k, v in tracker.items()
+            k: v['values'].float() * loss_scale for k, v in tracker.items()
             if k.startswith('iter_') and 'tokens_per_expert' in k
         }
         for name, metric_list in diag_metrics.items():
@@ -817,11 +817,19 @@ def track_moe_metrics(
         for name, metric_list in diag_token_metrics.items():
             # metric_list shape: [num_layers, num_experts]
             per_layer_mean = metric_list.mean(dim=1)
+            per_layer_max = metric_list.max(dim=1).values
+            per_layer_min = metric_list.min(dim=1).values
             overall_mean = per_layer_mean.mean()
+            overall_max = per_layer_max.mean()
+            overall_min = per_layer_min.mean()
             if writer:
                 writer.add_scalar(f"moe_diag/{name}_mean", overall_mean, iteration)
+                writer.add_scalar(f"moe_diag/{name}_max", overall_max, iteration)
+                writer.add_scalar(f"moe_diag/{name}_min", overall_min, iteration)
             if wandb_writer:
                 wandb_writer.log({f"moe_diag/{name}_mean": overall_mean}, iteration)
+                wandb_writer.log({f"moe_diag/{name}_max": overall_max}, iteration)
+                wandb_writer.log({f"moe_diag/{name}_min": overall_min}, iteration)
 
         token_stat_metrics = {}
         # Compute per-layer stats across experts, it will calculate the max, mean,
