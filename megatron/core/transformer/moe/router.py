@@ -523,12 +523,15 @@ class TopKRouter(Router):
 
         return scores, routing_map
 
-    def forward(self, input: torch.Tensor):
+    def forward(self, input: torch.Tensor, expert_mask: torch.Tensor = None):
         """
         Forward pass of the router.
 
         Args:
             input (torch.Tensor): Input tensor.
+            expert_mask (torch.Tensor, optional): Boolean mask of shape [num_tokens, num_experts].
+                True positions will have their logits set to -inf before routing (pre-masking).
+                Used by dedup strategy to exclude already-selected experts.
         """
         self._maintain_float32_expert_bias()
 
@@ -538,6 +541,14 @@ class TopKRouter(Router):
 
         # Store logits for iteration diagnostics (read by MoELayer)
         self._last_logits = logits.detach() if self.config.moe_iteration_diagnostics else None
+
+        # Apply expert pre-mask (for dedup: mask out already-selected experts)
+        if expert_mask is not None:
+            seq_length, bsz = logits.shape[:2]
+            mask_2d = expert_mask.view(-1, expert_mask.shape[-1])
+            logits_2d = logits.view(-1, logits.shape[-1])
+            logits_2d = logits_2d.masked_fill(mask_2d, float('-inf'))
+            logits = logits_2d.view(seq_length, bsz, -1)
 
         scores, routing_map = self.routing(logits)
 

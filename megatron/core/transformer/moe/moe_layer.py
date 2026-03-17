@@ -218,32 +218,6 @@ class MoELayer(BaseMoELayer):
         else:
             return self.router
 
-    def _apply_dedup_mask(self, probs, routing_map, accumulated_routing_map):
-        """For 'dedup' strategy: mask out (token, expert) pairs already selected
-        in prior iterations and renormalize the routing probabilities.
-
-        Args:
-            probs: Routing probabilities [num_tokens, num_experts].
-            routing_map: Current routing map [num_tokens, num_experts] (bool).
-            accumulated_routing_map: Union of all prior routing maps [num_tokens, num_experts] (bool).
-
-        Returns:
-            Tuple of (modified probs, modified routing_map).
-        """
-        # Mask out experts already selected in prior iterations
-        dedup_mask = ~accumulated_routing_map  # True for NOT-yet-selected
-        routing_map = routing_map & dedup_mask
-
-        # Zero out masked positions in probs
-        probs = probs * routing_map
-
-        # Renormalize probs so probability mass is preserved per token.
-        # This prevents weakened expert contributions when some top-k slots are masked.
-        prob_sum = probs.sum(dim=-1, keepdim=True)
-        probs = probs / (prob_sum + 1e-20)
-
-        return probs, routing_map
-
     def _get_output_scale(self, iteration: int):
         """Get the output scaling factor for a given iteration."""
         if self.iteration_scaling == "uniform":
@@ -341,12 +315,12 @@ class MoELayer(BaseMoELayer):
                     num_router_calls += 1
                 elif self.iteration_routing_strategy == "dedup":
                     self.router._aux_loss_scale = aux_scale
-                    probs, routing_map = self.router(current_routing_input)
+                    # Pre-mask: set logits of already-selected experts to -inf
+                    # so top-k selection picks from remaining experts only.
+                    probs, routing_map = self.router(
+                        current_routing_input, expert_mask=accumulated_routing_map
+                    )
                     num_router_calls += 1
-                    if accumulated_routing_map is not None:
-                        probs, routing_map = self._apply_dedup_mask(
-                            probs, routing_map, accumulated_routing_map
-                        )
                     if accumulated_routing_map is None:
                         accumulated_routing_map = routing_map.clone()
                     else:
