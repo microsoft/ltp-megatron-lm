@@ -99,6 +99,12 @@ class TestRecursiveMoELayerInit:
         assert layer.num_iterations == 2
         assert layer.extra_routers is None
 
+    def test_soft_dedup_init(self):
+        config = _make_config(num_iterations=2, routing_strategy="soft_dedup")
+        layer = _build_moe_layer(config)
+        assert layer.num_iterations == 2
+        assert layer.extra_routers is None
+
     def test_fixed_init(self):
         config = _make_config(num_iterations=2, routing_strategy="fixed")
         layer = _build_moe_layer(config)
@@ -143,7 +149,7 @@ class TestRecursiveMoEForward:
         assert output.shape == hidden.shape
 
     @pytest.mark.parametrize("num_iterations", [2, 3])
-    @pytest.mark.parametrize("routing_strategy", ["reroute", "multi_router", "dedup", "fixed"])
+    @pytest.mark.parametrize("routing_strategy", ["reroute", "multi_router", "dedup", "soft_dedup", "fixed"])
     def test_recursive_output_shape(self, num_iterations, routing_strategy):
         config = _make_config(num_iterations=num_iterations, routing_strategy=routing_strategy)
         output, bias, hidden = self._run_forward(config)
@@ -500,6 +506,30 @@ class TestRecursiveMoEDiagnostics:
         tracker = parallel_state.get_moe_layer_wise_logging_tracker()
         overlap_val = tracker["iter_diag_expert_overlap"]["values"][0].item()
         assert abs(overlap_val) < 1e-5, f"Dedup strategy overlap should be ~0.0, got {overlap_val}"
+
+    def test_soft_dedup_overlap_between_dedup_and_reroute(self):
+        """Soft dedup with large penalty should have low overlap (close to dedup)."""
+        config_soft = _make_config(num_iterations=2, routing_strategy="soft_dedup", iteration_diagnostics=True)
+        config_soft.moe_iteration_soft_dedup_penalty = 10.0  # large penalty ≈ dedup
+        layer = _build_moe_layer(config_soft).cuda()
+        layer.train()
+        _clear_tracker()
+        hidden = torch.randn(8, 2, config_soft.hidden_size, device=torch.cuda.current_device())
+        output, _ = layer(hidden)
+        tracker = parallel_state.get_moe_layer_wise_logging_tracker()
+        overlap_val = tracker["iter_diag_expert_overlap"]["values"][0].item()
+        # With large penalty, overlap should be very low (close to 0)
+        assert overlap_val < 0.5, f"Soft dedup with large penalty should have low overlap, got {overlap_val}"
+
+    def test_soft_dedup_output_shape(self):
+        """Soft dedup should produce correct output shapes."""
+        config = _make_config(num_iterations=2, routing_strategy="soft_dedup")
+        config.moe_iteration_soft_dedup_penalty = 2.0
+        layer = _build_moe_layer(config).cuda()
+        layer.train()
+        hidden = torch.randn(8, 2, config.hidden_size, device=torch.cuda.current_device())
+        output, _ = layer(hidden)
+        assert output.shape == hidden.shape
 
     def test_diagnostics_three_iterations(self):
         """With 3 iterations, entropy has 3 entries, overlap/KL are present."""

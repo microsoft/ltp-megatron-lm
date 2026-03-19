@@ -325,6 +325,20 @@ class MoELayer(BaseMoELayer):
                         accumulated_routing_map = routing_map.clone()
                     else:
                         accumulated_routing_map = accumulated_routing_map | routing_map
+                elif self.iteration_routing_strategy == "soft_dedup":
+                    self.router._aux_loss_scale = aux_scale
+                    # Soft pre-mask: subtract penalty from already-selected expert logits
+                    # so re-selection is discouraged but not forbidden.
+                    probs, routing_map = self.router(
+                        current_routing_input,
+                        expert_mask=accumulated_routing_map,
+                        expert_mask_penalty=self.config.moe_iteration_soft_dedup_penalty,
+                    )
+                    num_router_calls += 1
+                    if accumulated_routing_map is None:
+                        accumulated_routing_map = routing_map.clone()
+                    else:
+                        accumulated_routing_map = accumulated_routing_map | routing_map
                 else:
                     # "reroute"
                     self.router._aux_loss_scale = aux_scale

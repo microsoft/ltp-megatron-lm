@@ -2644,12 +2644,17 @@ def _add_moe_args(parser):
                        '"add": x_{i+1} = x_i + expert_output (standard residual). '
                        '"replace": x_{i+1} = expert_output (direct replacement).')
     group.add_argument('--moe-iteration-routing-strategy', type=str, default='reroute',
-                       choices=['reroute', 'multi_router', 'dedup', 'fixed'],
+                       choices=['reroute', 'multi_router', 'dedup', 'soft_dedup', 'fixed'],
                        help='Routing strategy for multiple expert iterations. '
                        '"reroute": re-invoke same router with updated hidden_states each iteration. '
                        '"multi_router": use independent Router instances per iteration. '
                        '"dedup": re-route but mask out already-selected (token, expert) pairs. '
+                       '"soft_dedup": re-route but subtract a penalty from already-selected expert logits. '
                        '"fixed": route once and reuse for all iterations.')
+    group.add_argument('--moe-iteration-soft-dedup-penalty', type=float, default=2.0,
+                       help='Penalty subtracted from logits of already-selected experts in soft_dedup. '
+                       'Higher values discourage re-selection more strongly. '
+                       '0 = equivalent to reroute, large values ≈ dedup.')
     group.add_argument('--moe-iteration-aux-loss-scale', type=float, default=1.0,
                        help='Scaling factor for auxiliary loss from additional routing iterations '
                        '(iterations 2..N). Prevents aux loss from dominating with multiple routes.')

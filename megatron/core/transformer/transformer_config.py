@@ -498,7 +498,12 @@ class TransformerConfig(ModelParallelConfig):
     'reroute': Re-invoke the same router with updated hidden_states each iteration.
     'multi_router': Use independent Router instances (separate parameters) per iteration.
     'dedup': Re-route but mask out (token, expert) pairs already selected in prior iterations.
+    'soft_dedup': Re-route but subtract a penalty from already-selected expert logits.
     'fixed': Route once and reuse the same routing decisions for all iterations."""
+
+    moe_iteration_soft_dedup_penalty: float = 2.0
+    """Penalty subtracted from logits of already-selected experts in soft_dedup strategy.
+    Higher values discourage re-selection more strongly. 0 = reroute, +inf = dedup."""
 
     moe_iteration_aux_loss_scale: float = 1.0
     """Scaling factor for auxiliary loss from additional routing iterations.
@@ -751,11 +756,11 @@ class TransformerConfig(ModelParallelConfig):
                 f'got {self.moe_iteration_residual}'
             )
         if self.moe_iteration_routing_strategy not in [
-            "reroute", "multi_router", "dedup", "fixed"
+            "reroute", "multi_router", "dedup", "soft_dedup", "fixed"
         ]:
             raise ValueError(
                 f'moe_iteration_routing_strategy must be one of '
-                f'"reroute", "multi_router", "dedup", "fixed", '
+                f'"reroute", "multi_router", "dedup", "soft_dedup", "fixed", '
                 f'got {self.moe_iteration_routing_strategy}'
             )
         if self.moe_iteration_scaling not in ["none", "uniform", "learned_gate"]:
