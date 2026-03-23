@@ -483,6 +483,12 @@ class TestRecursiveMoEDiagnostics:
         assert "iter_0_tokens_per_expert" in tracker
         assert "iter_1_tokens_per_expert" in tracker
 
+        # Cumulative unique experts
+        assert "iter_diag_cumulative_unique_experts" in tracker
+        unique_val = tracker["iter_diag_cumulative_unique_experts"]["values"][0].item()
+        topk = config.moe_router_topk
+        assert topk <= unique_val <= topk * 2, f"Unique experts {unique_val} out of range [{topk}, {topk*2}]"
+
     def test_overlap_one_for_fixed_strategy(self):
         """Fixed strategy uses the same routing — overlap should be 1.0."""
         config = _make_config(num_iterations=2, routing_strategy="fixed", iteration_diagnostics=True)
@@ -494,6 +500,10 @@ class TestRecursiveMoEDiagnostics:
         tracker = parallel_state.get_moe_layer_wise_logging_tracker()
         overlap_val = tracker["iter_diag_expert_overlap"]["values"][0].item()
         assert abs(overlap_val - 1.0) < 1e-5, f"Fixed strategy overlap should be ~1.0, got {overlap_val}"
+        # Per-pair metric should also exist
+        assert "iter_diag_overlap_0_1" in tracker
+        pair_val = tracker["iter_diag_overlap_0_1"]["values"][0].item()
+        assert abs(pair_val - 1.0) < 1e-5, f"Per-pair overlap_0_1 should be ~1.0, got {pair_val}"
 
     def test_overlap_zero_for_dedup_strategy(self):
         """Dedup strategy masks out prior selections — overlap should be 0.0."""
@@ -532,7 +542,7 @@ class TestRecursiveMoEDiagnostics:
         assert output.shape == hidden.shape
 
     def test_diagnostics_three_iterations(self):
-        """With 3 iterations, entropy has 3 entries, overlap/KL are present."""
+        """With 3 iterations, entropy has 3 entries, per-pair overlap/KL are present."""
         config = _make_config(num_iterations=3, iteration_diagnostics=True)
         layer = _build_moe_layer(config).cuda()
         layer.train()
@@ -545,6 +555,22 @@ class TestRecursiveMoEDiagnostics:
             assert f"iter_diag_entropy_iter_{i}" in tracker
             assert f"iter_{i}_tokens_per_expert" in tracker
 
+        # Consecutive pair overlap and KL: (0,1) and (1,2)
+        for i in range(1, 3):
+            assert f"iter_diag_overlap_{i-1}_{i}" in tracker, f"Missing overlap_{i-1}_{i}"
+            assert f"iter_diag_kl_{i-1}_{i}" in tracker, f"Missing kl_{i-1}_{i}"
+
+        # Non-consecutive pair overlap: (0,2)
+        assert "iter_diag_overlap_0_2" in tracker, "Missing non-consecutive overlap_0_2"
+
+        # Cumulative unique expert count
+        assert "iter_diag_cumulative_unique_experts" in tracker
+        unique_val = tracker["iter_diag_cumulative_unique_experts"]["values"][0].item()
+        topk = config.moe_router_topk
+        # Must be >= topk (at least iteration 0's experts) and <= topk * 3
+        assert topk <= unique_val <= topk * 3, f"Unique experts {unique_val} out of range [{topk}, {topk*3}]"
+
+        # Aggregated overlap and KL should still be present
         assert "iter_diag_expert_overlap" in tracker
         assert "iter_diag_kl_div" in tracker
 

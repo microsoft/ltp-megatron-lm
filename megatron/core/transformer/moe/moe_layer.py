@@ -284,6 +284,7 @@ class MoELayer(BaseMoELayer):
             )
             prev_routing_map = None
             prev_logits = None
+            all_routing_maps = []  # Store all routing maps for cross-pair diagnostics
             diag_overlap_sum = 0.0
             diag_kl_sum = 0.0
             diag_pair_count = 0
@@ -369,6 +370,13 @@ class MoELayer(BaseMoELayer):
                                 / self.router.topk
                             )
                             diag_overlap_sum += overlap.item()
+                            # Per-pair overlap: overlap(i-1, i)
+                            save_to_aux_losses_tracker(
+                                f"iter_diag_overlap_{iteration-1}_{iteration}",
+                                overlap,
+                                self.layer_number,
+                                self.config.num_layers,
+                            )
 
                         # Metric: KL divergence between consecutive iterations
                         if prev_logits is not None and curr_logits is not None:
@@ -377,10 +385,18 @@ class MoELayer(BaseMoELayer):
                             kl = (p * (torch.log(p + 1e-12) - torch.log(q + 1e-12))).sum(dim=-1).mean()
                             diag_kl_sum += kl.item()
                             diag_pair_count += 1
+                            # Per-pair KL: kl(i-1, i)
+                            save_to_aux_losses_tracker(
+                                f"iter_diag_kl_{iteration-1}_{iteration}",
+                                kl,
+                                self.layer_number,
+                                self.config.num_layers,
+                            )
 
                         # Store for next iteration comparison
                         prev_routing_map = routing_map.detach().clone()
                         prev_logits = curr_logits
+                        all_routing_maps.append(routing_map.detach().clone())
 
                 # --- Expert computation (permute → experts → unpermute) ---
                 # Expert sees routing_input (not the one with iteration embedding)
@@ -441,6 +457,34 @@ class MoELayer(BaseMoELayer):
                     self.layer_number,
                     self.config.num_layers,
                 )
+
+                # Non-consecutive pairwise overlaps (e.g., overlap_0_2 for N=3)
+                with torch.no_grad():
+                    for i in range(len(all_routing_maps)):
+                        for j in range(i + 2, len(all_routing_maps)):
+                            cross_overlap = (
+                                (all_routing_maps[i] & all_routing_maps[j]).float().sum(dim=-1).mean()
+                                / self.router.topk
+                            )
+                            save_to_aux_losses_tracker(
+                                f"iter_diag_overlap_{i}_{j}",
+                                cross_overlap,
+                                self.layer_number,
+                                self.config.num_layers,
+                            )
+
+                    # Cumulative unique expert count across all iterations
+                    if len(all_routing_maps) >= 2:
+                        cumulative_map = all_routing_maps[0]
+                        for rm in all_routing_maps[1:]:
+                            cumulative_map = cumulative_map | rm
+                        unique_count = cumulative_map.float().sum(dim=-1).mean()
+                        save_to_aux_losses_tracker(
+                            "iter_diag_cumulative_unique_experts",
+                            unique_count,
+                            self.layer_number,
+                            self.config.num_layers,
+                        )
 
             # NOTE: Tracker normalization for load_balancing_loss, z_loss, and
             # tokens_per_expert is NOT done here. It is done once per training step

@@ -1544,10 +1544,17 @@ def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_r
         if args.moe_z_loss_coeff is not None:
             track_names.append("z_loss")
         if getattr(args, 'moe_iteration_diagnostics', False) and getattr(args, 'moe_num_iterations', 1) >= 2:
-            track_names.extend(["iter_diag_expert_overlap", "iter_diag_kl_div"])
+            track_names.extend(["iter_diag_expert_overlap", "iter_diag_kl_div",
+                                "iter_diag_cumulative_unique_experts"])
             for i in range(args.moe_num_iterations):
                 track_names.append(f"iter_diag_entropy_iter_{i}")
                 track_names.append(f"iter_{i}_tokens_per_expert")
+            # Per-pair overlap and KL (consecutive and non-consecutive)
+            for i in range(args.moe_num_iterations):
+                for j in range(i + 1, args.moe_num_iterations):
+                    track_names.append(f"iter_diag_overlap_{i}_{j}")
+                    if j == i + 1:
+                        track_names.append(f"iter_diag_kl_{i}_{j}")
         track_moe_metrics(
             loss_scale=moe_loss_scale,
             iteration=iteration,
