@@ -248,6 +248,8 @@ def num_floating_point_operations(args, batch_size):
         )
         # Recursive MoE: expert computation is repeated moe_num_iterations times per layer
         moe_num_iterations = getattr(args, 'moe_num_iterations', 1)
+        # Block Loop: full block (attention + MoE) is repeated block_loop_iterations times per layer
+        block_loop_iterations = getattr(args, 'block_loop_iterations', 1)
         # SwiGLU.
         gated_linear_multiplier = 3 / 2 if args.swiglu else 1
 
@@ -320,8 +322,9 @@ def num_floating_point_operations(args, batch_size):
             )
 
         total_floating_point_operations = batch_size * args.seq_length * (
-            # MLP
-            expansion_factor
+            # MLP (multiplied by block_loop_iterations for full-block looping)
+            block_loop_iterations
+            * expansion_factor
             * num_layers
             * args.hidden_size
             * (
@@ -339,12 +342,12 @@ def num_floating_point_operations(args, batch_size):
                 ) * (num_moe_layers/num_layers)
                 # Shared Experts.
                 + (
-                    shared_expert_ffn_hidden_size 
+                    shared_expert_ffn_hidden_size
                     * gated_linear_multiplier
                 ) * (num_moe_layers/num_layers)
             )
-            # Self Attention
-            + self_attn_term
+            # Self Attention (multiplied by block_loop_iterations for full-block looping)
+            + block_loop_iterations * self_attn_term
             # MTP norms and proj
             + 3*2
             * mtp_num_layers

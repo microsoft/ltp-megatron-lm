@@ -342,6 +342,43 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
         # [Module 9: BiasDropoutFusion]
         self.mlp_bda = build_module(submodules.mlp_bda)
 
+        # Block Loop (Loop Full Transformer Block)
+        self.block_loop_iterations = config.block_loop_iterations
+        if self.block_loop_iterations > 1:
+            self.block_loop_scaling = config.block_loop_scaling
+
+            # Block loop norm between iterations
+            if config.block_loop_norm:
+                self.block_loop_norm = build_module(
+                    submodules.input_layernorm,
+                    config=self.config,
+                    hidden_size=self.config.hidden_size,
+                    eps=self.config.layernorm_epsilon,
+                )
+            else:
+                self.block_loop_norm = None
+
+            # Block loop per-iteration embedding: shape (N, hidden_size)
+            if config.block_loop_embedding:
+                self.block_loop_embedding = torch.nn.Parameter(
+                    torch.empty(
+                        self.block_loop_iterations, self.config.hidden_size
+                    ).normal_(std=0.02)
+                )
+            else:
+                self.block_loop_embedding = None
+
+            # Block loop learned gate: shape (N,)
+            if config.block_loop_scaling == "learned_gate":
+                self.block_loop_gate = torch.nn.Parameter(
+                    torch.full(
+                        (self.block_loop_iterations,),
+                        1.0 / self.block_loop_iterations,
+                    )
+                )
+            else:
+                self.block_loop_gate = None
+
         self.recompute_input_layernorm = False
         self.recompute_pre_mlp_layernorm = False
         self.recompute_mlp = False
@@ -385,10 +422,49 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
 
         This method calls the core computation of a transformer layer, including
         self-attention, cross-attention (if applicable), and feed-forward operations.
+        When block_loop_iterations > 1, the entire attention + MLP pipeline is repeated
+        N times with shared weights, feeding each iteration's output as the next input.
         """
-        pre_mlp_layernorm_output, residual, context = self._forward_attention(*args, **kwargs)
-        output = self._forward_mlp(pre_mlp_layernorm_output, residual)
-        return output, context
+        if self.block_loop_iterations <= 1:
+            # Fast path: identical to original, zero overhead
+            pre_mlp_layernorm_output, residual, context = self._forward_attention(
+                *args, **kwargs
+            )
+            output = self._forward_mlp(pre_mlp_layernorm_output, residual)
+            return output, context
+
+        # Block loop path: run attention + MLP N times
+        hidden_states = kwargs.get('hidden_states', args[0] if args else None)
+        context = None
+
+        for iteration in range(self.block_loop_iterations):
+            loop_input = hidden_states
+
+            # Iteration norm (skip first iteration)
+            if iteration > 0 and self.block_loop_norm is not None:
+                loop_input = self.block_loop_norm(loop_input)
+
+            # Iteration embedding: symmetry-breaking signal for attention and MoE
+            if self.block_loop_embedding is not None:
+                loop_input = loop_input + self.block_loop_embedding[iteration]
+
+            # Run attention + MLP with updated hidden_states
+            iter_kwargs = dict(kwargs)
+            iter_kwargs['hidden_states'] = loop_input
+            pre_mlp, residual, context = self._forward_attention(**iter_kwargs)
+            iter_output = self._forward_mlp(pre_mlp, residual)
+
+            # Scaling: apply to delta (iter_output - loop_input)
+            if self.block_loop_scaling == "uniform":
+                delta = iter_output - loop_input
+                hidden_states = hidden_states + delta / self.block_loop_iterations
+            elif self.block_loop_scaling == "learned_gate":
+                delta = iter_output - loop_input
+                hidden_states = hidden_states + delta * self.block_loop_gate[iteration]
+            else:  # "none"
+                hidden_states = iter_output
+
+        return hidden_states, context
 
     def _forward_attention(
         self,

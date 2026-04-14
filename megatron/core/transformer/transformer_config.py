@@ -533,6 +533,28 @@ class TransformerConfig(ModelParallelConfig):
     consecutive iterations, and per-iteration tokens-per-expert distributions.
     Only meaningful when moe_num_iterations >= 2. Gated to avoid overhead when disabled."""
 
+    ###################################
+    # Block Loop (Loop Full Transformer Block)
+    ###################################
+    block_loop_iterations: int = 1
+    """Number of times to loop the full transformer block (Attention + MoE).
+    1 = standard single-pass. >1 = re-run attention and MoE N times with shared weights.
+    Mutually exclusive with moe_num_iterations > 1."""
+
+    block_loop_norm: bool = True
+    """Apply LayerNorm between block loop iterations on the hidden states.
+    Only meaningful when block_loop_iterations >= 2."""
+
+    block_loop_scaling: str = "none"
+    """Output scaling for block loop iterations.
+    Options: 'none' (no scaling), 'uniform' (1/N), 'learned_gate' (per-iteration learnable scalar).
+    Only meaningful when block_loop_iterations >= 2."""
+
+    block_loop_embedding: bool = False
+    """Add learnable per-iteration embedding to hidden states before each block loop iteration.
+    Provides symmetry-breaking signal so the same weights can behave differently across iterations.
+    Only meaningful when block_loop_iterations >= 2."""
+
     ##################
     # Context Parallel
     ##################
@@ -778,6 +800,24 @@ class TransformerConfig(ModelParallelConfig):
                 "moe_shared_expert_overlap with moe_num_iterations > 1: "
                 "shared expert overlap will only apply to the last iteration's dispatcher call. "
                 "Consider disabling moe_shared_expert_overlap for recursive MoE."
+            )
+
+        # Block Loop validation
+        if self.block_loop_iterations < 1:
+            raise ValueError(
+                f'block_loop_iterations must be >= 1, got {self.block_loop_iterations}'
+            )
+        if self.block_loop_scaling not in ["none", "uniform", "learned_gate"]:
+            raise ValueError(
+                f'block_loop_scaling must be one of '
+                f'"none", "uniform", "learned_gate", '
+                f'got {self.block_loop_scaling}'
+            )
+        if self.block_loop_iterations > 1 and self.moe_num_iterations > 1:
+            raise ValueError(
+                'block_loop_iterations > 1 and moe_num_iterations > 1 are mutually exclusive. '
+                'Block loop subsumes MoE-only loop. Use block_loop_iterations for full-block '
+                'looping, or moe_num_iterations for MoE-only looping, but not both.'
             )
 
         if self.cpu_offloading and (

@@ -2676,6 +2676,22 @@ def _add_moe_args(parser):
                        'per-iteration tokens-per-expert. Only meaningful with '
                        '--moe-num-iterations >= 2.')
 
+    # Block Loop (Loop Full Transformer Block)
+    group.add_argument('--block-loop-iterations', type=int, default=1,
+                       help='Number of times to loop the full transformer block '
+                       '(Attention + MoE). 1 = standard. >1 = re-run attention and '
+                       'MoE N times with shared weights.')
+    group.add_argument('--block-loop-norm', action='store_true', default=True,
+                       help='Apply LayerNorm between block loop iterations.')
+    group.add_argument('--no-block-loop-norm', dest='block_loop_norm',
+                       action='store_false',
+                       help='Disable LayerNorm between block loop iterations.')
+    group.add_argument('--block-loop-scaling', type=str, default='none',
+                       choices=['none', 'uniform', 'learned_gate'],
+                       help='Output scaling for block loop iterations.')
+    group.add_argument('--block-loop-embedding', action='store_true', default=False,
+                       help='Add per-iteration embedding to hidden states in block loop.')
+
     return parser
 
 def _add_mla_args(parser):
