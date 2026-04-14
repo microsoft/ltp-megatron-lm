@@ -429,7 +429,11 @@ class _ParamAndGradBucketGroup:
         ), 'register_grad_ready() should only be called when overlap_grad_reduce is True'
         if self.is_last_microbatch:
             assert param in self.param_to_bucket, 'Param is not in the bucket group'
-            assert param not in self.params_with_grad, 'Cannot set grad twice'
+            if param in self.params_with_grad:
+                # Parameter used multiple times in forward (e.g., block loop weight sharing).
+                # Gradients already accumulated via main_grad.add_() in backward hook;
+                # just skip duplicate ready registration.
+                return
             self.params_with_grad.add(param)
             # If all params in bucket group have grads available, issue communication call.
             if len(self.params_with_grad) == len(self.params):
