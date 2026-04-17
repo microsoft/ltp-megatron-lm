@@ -2689,8 +2689,11 @@ def _add_moe_args(parser):
     group.add_argument('--block-loop-scaling', type=str, default='none',
                        choices=['none', 'uniform', 'learned_gate'],
                        help='Output scaling for block loop iterations.')
-    group.add_argument('--block-loop-embedding', action='store_true', default=False,
-                       help='Add per-iteration embedding to hidden states in block loop.')
+    group.add_argument('--block-loop-embedding', type=str, default='none',
+                       choices=['none', 'per_layer', 'global'],
+                       help='Iteration embedding mode for block loop: '
+                       'none (no embedding), per_layer (each layer has own embedding), '
+                       'global (one shared embedding across all layers).')
 
     return parser
 

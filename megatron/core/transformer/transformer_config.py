@@ -550,9 +550,11 @@ class TransformerConfig(ModelParallelConfig):
     Options: 'none' (no scaling), 'uniform' (1/N), 'learned_gate' (per-iteration learnable scalar).
     Only meaningful when block_loop_iterations >= 2."""
 
-    block_loop_embedding: bool = False
-    """Add learnable per-iteration embedding to hidden states before each block loop iteration.
-    Provides symmetry-breaking signal so the same weights can behave differently across iterations.
+    block_loop_embedding: str = "none"
+    """Iteration embedding mode for block loop.
+    'none': no embedding.
+    'per_layer': each TransformerLayer has its own (N, hidden_size) embedding.
+    'global': one shared (N, hidden_size) embedding across all layers.
     Only meaningful when block_loop_iterations >= 2."""
 
     ##################
@@ -812,6 +814,12 @@ class TransformerConfig(ModelParallelConfig):
                 f'block_loop_scaling must be one of '
                 f'"none", "uniform", "learned_gate", '
                 f'got {self.block_loop_scaling}'
+            )
+        if self.block_loop_embedding not in ["none", "per_layer", "global"]:
+            raise ValueError(
+                f'block_loop_embedding must be one of '
+                f'"none", "per_layer", "global", '
+                f'got {self.block_loop_embedding}'
             )
         if self.block_loop_iterations > 1 and self.moe_num_iterations > 1:
             raise ValueError(

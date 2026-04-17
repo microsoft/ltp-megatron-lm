@@ -267,6 +267,15 @@ class TransformerBlock(MegatronModule):
         self._build_layers()
         self.num_layers_per_pipeline_rank = len(self.layers)
 
+        # Block Loop (Full-Model Loop)
+        self.block_loop_iterations = config.block_loop_iterations
+        if self.block_loop_iterations > 1 and config.block_loop_embedding == "global":
+            self.block_loop_global_embedding = torch.nn.Parameter(
+                torch.empty(self.block_loop_iterations, config.hidden_size).normal_(std=0.02)
+            )
+        else:
+            self.block_loop_global_embedding = None
+
     def _build_layers(self):
         # Transformer layers.
         # @jcasper can we improve how we deal with layer_number?
@@ -324,7 +333,7 @@ class TransformerBlock(MegatronModule):
     ):
         """Forward method with activation checkpointing."""
 
-        def custom(start: int, end: int):
+        def custom(start: int, end: int, block_loop_iteration=None):
             def custom_forward(
                 hidden_states, attention_mask, context, context_mask, rotary_pos_emb
             ):
@@ -339,6 +348,7 @@ class TransformerBlock(MegatronModule):
                         attention_bias=attention_bias,
                         inference_context=None,
                         packed_seq_params=packed_seq_params,
+                        block_loop_iteration=block_loop_iteration,
                     )
                 return hidden_states, context
 
@@ -373,34 +383,41 @@ class TransformerBlock(MegatronModule):
             # Uniformly divide the total number of Transformer layers and checkpoint
             # the input activation of each divided chunk.
             # A method to further reduce memory usage reducing checkpoints.
-            layer_idx = 0
-            while layer_idx < self.num_layers_per_pipeline_rank:
-                hidden_states, context = checkpoint_handler(
-                    custom(layer_idx, layer_idx + self.config.recompute_num_layers)
-                )
-
-                layer_idx += self.config.recompute_num_layers
+            for loop_iter in range(self.block_loop_iterations):
+                block_loop_iteration = loop_iter if self.block_loop_iterations > 1 else None
+                if self.block_loop_global_embedding is not None:
+                    hidden_states = hidden_states + self.block_loop_global_embedding[loop_iter]
+                layer_idx = 0
+                while layer_idx < self.num_layers_per_pipeline_rank:
+                    hidden_states, context = checkpoint_handler(
+                        custom(layer_idx, layer_idx + self.config.recompute_num_layers, block_loop_iteration)
+                    )
+                    layer_idx += self.config.recompute_num_layers
 
         elif self.config.recompute_method == 'block':
             # Checkpoint the input activation of only a set number of individual
             # Transformer layers and skip the rest.
             # A method fully use the device memory removing redundant re-computation.
-            recompute_skip_num_layers = 0
-            for layer_idx in range(self.num_layers_per_pipeline_rank):
-                # Skip recomputation when input grad computation is not needed.
-                # Need to have at least one input tensor with gradient computation
-                # for re-enterant autograd engine.
-                if self.config.fp8 and not hidden_states.requires_grad:
-                    recompute_skip_num_layers += 1
-                if (
-                    layer_idx >= recompute_skip_num_layers
-                    and layer_idx < self.config.recompute_num_layers + recompute_skip_num_layers
-                ):
-                    hidden_states, context = checkpoint_handler(custom(layer_idx, layer_idx + 1))
-                else:
-                    hidden_states, context = custom(layer_idx, layer_idx + 1)(
-                        hidden_states, attention_mask, context, context_mask, rotary_pos_emb
-                    )
+            for loop_iter in range(self.block_loop_iterations):
+                block_loop_iteration = loop_iter if self.block_loop_iterations > 1 else None
+                if self.block_loop_global_embedding is not None:
+                    hidden_states = hidden_states + self.block_loop_global_embedding[loop_iter]
+                recompute_skip_num_layers = 0
+                for layer_idx in range(self.num_layers_per_pipeline_rank):
+                    # Skip recomputation when input grad computation is not needed.
+                    # Need to have at least one input tensor with gradient computation
+                    # for re-enterant autograd engine.
+                    if self.config.fp8 and not hidden_states.requires_grad:
+                        recompute_skip_num_layers += 1
+                    if (
+                        layer_idx >= recompute_skip_num_layers
+                        and layer_idx < self.config.recompute_num_layers + recompute_skip_num_layers
+                    ):
+                        hidden_states, context = checkpoint_handler(custom(layer_idx, layer_idx + 1, block_loop_iteration))
+                    else:
+                        hidden_states, context = custom(layer_idx, layer_idx + 1, block_loop_iteration)(
+                            hidden_states, attention_mask, context, context_mask, rotary_pos_emb
+                        )
         else:
             raise ValueError("Invalid activation recompute method.")
 
@@ -519,33 +536,41 @@ class TransformerBlock(MegatronModule):
                     packed_seq_params=packed_seq_params,
                 )
             else:
-                for l_no, layer in enumerate(self.layers):
-                    inner_fp8_context = (
-                        get_fp8_context(self.config, layer.layer_number - 1)
-                        if use_inner_fp8_context
-                        else nullcontext()
-                    )
-                    with self.offload_context, inner_fp8_context:
-                        hidden_states, context = layer(
-                            hidden_states=hidden_states,
-                            attention_mask=attention_mask,
-                            context=context,
-                            context_mask=context_mask,
-                            rotary_pos_emb=rotary_pos_emb,
-                            rotary_pos_cos=rotary_pos_cos,
-                            rotary_pos_sin=rotary_pos_sin,
-                            attention_bias=attention_bias,
-                            inference_context=inference_context,
-                            packed_seq_params=packed_seq_params,
-                            sequence_len_offset=sequence_len_offset,
-                        )
+                for loop_iter in range(self.block_loop_iterations):
+                    # Global iteration embedding (before layer stack)
+                    if self.block_loop_global_embedding is not None:
+                        hidden_states = hidden_states + self.block_loop_global_embedding[loop_iter]
 
-                    if (
-                        torch.is_grad_enabled()
-                        and self.config.cpu_offloading
-                        and self.group_prefetch_offload_commit_async is not None
-                    ):
-                        hidden_states = self.group_prefetch_offload_commit_async(hidden_states)
+                    block_loop_iteration = loop_iter if self.block_loop_iterations > 1 else None
+
+                    for l_no, layer in enumerate(self.layers):
+                        inner_fp8_context = (
+                            get_fp8_context(self.config, layer.layer_number - 1)
+                            if use_inner_fp8_context
+                            else nullcontext()
+                        )
+                        with self.offload_context, inner_fp8_context:
+                            hidden_states, context = layer(
+                                hidden_states=hidden_states,
+                                attention_mask=attention_mask,
+                                context=context,
+                                context_mask=context_mask,
+                                rotary_pos_emb=rotary_pos_emb,
+                                rotary_pos_cos=rotary_pos_cos,
+                                rotary_pos_sin=rotary_pos_sin,
+                                attention_bias=attention_bias,
+                                inference_context=inference_context,
+                                packed_seq_params=packed_seq_params,
+                                sequence_len_offset=sequence_len_offset,
+                                block_loop_iteration=block_loop_iteration,
+                            )
+
+                        if (
+                            torch.is_grad_enabled()
+                            and self.config.cpu_offloading
+                            and self.group_prefetch_offload_commit_async is not None
+                        ):
+                            hidden_states = self.group_prefetch_offload_commit_async(hidden_states)
 
         # Final layer norm.
         if self.final_layernorm is not None:

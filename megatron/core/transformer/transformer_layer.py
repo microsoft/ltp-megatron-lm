@@ -347,6 +347,16 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
         if self.block_loop_iterations > 1:
             self.block_loop_scaling = config.block_loop_scaling
 
+            # Per-layer iteration embedding: shape (N, hidden_size)
+            if config.block_loop_embedding == "per_layer":
+                self.block_loop_embedding = torch.nn.Parameter(
+                    torch.empty(
+                        self.block_loop_iterations, self.config.hidden_size
+                    ).normal_(std=0.02)
+                )
+            else:
+                self.block_loop_embedding = None
+
             # Block loop norm between iterations
             if config.block_loop_norm:
                 self.block_loop_norm = build_module(
@@ -357,16 +367,6 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
                 )
             else:
                 self.block_loop_norm = None
-
-            # Block loop per-iteration embedding: shape (N, hidden_size)
-            if config.block_loop_embedding:
-                self.block_loop_embedding = torch.nn.Parameter(
-                    torch.empty(
-                        self.block_loop_iterations, self.config.hidden_size
-                    ).normal_(std=0.02)
-                )
-            else:
-                self.block_loop_embedding = None
 
             # Block loop learned gate: shape (N,)
             if config.block_loop_scaling == "learned_gate":
@@ -416,55 +416,50 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
         )
         return get_transformer_layer_offset(config)
 
-    def forward(self, *args, **kwargs):
+    def forward(self, *args, block_loop_iteration=None, **kwargs):
         """
         Perform a forward pass through the transformer layer.
 
-        This method calls the core computation of a transformer layer, including
-        self-attention, cross-attention (if applicable), and feed-forward operations.
-        When block_loop_iterations > 1, the entire attention + MLP pipeline is repeated
-        N times with shared weights, feeding each iteration's output as the next input.
+        When block_loop_iteration is not None, applies per-layer iteration signals
+        (norm, embedding, scaling) for the full-model block loop controlled by TransformerBlock.
         """
-        if self.block_loop_iterations <= 1:
-            # Fast path: identical to original, zero overhead
+        if block_loop_iteration is None:
+            # Standard path: no block loop or N=1
             pre_mlp_layernorm_output, residual, context = self._forward_attention(
                 *args, **kwargs
             )
             output = self._forward_mlp(pre_mlp_layernorm_output, residual)
             return output, context
 
-        # Block loop path: run attention + MLP N times
+        # Block loop path: single iteration, controlled by TransformerBlock outer loop
         hidden_states = kwargs.get('hidden_states', args[0] if args else None)
-        context = None
+        loop_input = hidden_states
 
-        for iteration in range(self.block_loop_iterations):
-            loop_input = hidden_states
+        # Per-layer iteration norm (skip first iteration)
+        if block_loop_iteration > 0 and self.block_loop_norm is not None:
+            loop_input = self.block_loop_norm(loop_input)
 
-            # Iteration norm (skip first iteration)
-            if iteration > 0 and self.block_loop_norm is not None:
-                loop_input = self.block_loop_norm(loop_input)
+        # Per-layer iteration embedding
+        if self.block_loop_embedding is not None:
+            loop_input = loop_input + self.block_loop_embedding[block_loop_iteration]
 
-            # Iteration embedding: symmetry-breaking signal for attention and MoE
-            if self.block_loop_embedding is not None:
-                loop_input = loop_input + self.block_loop_embedding[iteration]
+        # Run attention + MLP
+        iter_kwargs = dict(kwargs)
+        iter_kwargs['hidden_states'] = loop_input
+        pre_mlp, residual, context = self._forward_attention(**iter_kwargs)
+        iter_output = self._forward_mlp(pre_mlp, residual)
 
-            # Run attention + MLP with updated hidden_states
-            iter_kwargs = dict(kwargs)
-            iter_kwargs['hidden_states'] = loop_input
-            pre_mlp, residual, context = self._forward_attention(**iter_kwargs)
-            iter_output = self._forward_mlp(pre_mlp, residual)
+        # Scaling on delta
+        if self.block_loop_scaling == "uniform":
+            delta = iter_output - loop_input
+            output = hidden_states + delta / self.block_loop_iterations
+        elif self.block_loop_scaling == "learned_gate":
+            delta = iter_output - loop_input
+            output = hidden_states + delta * self.block_loop_gate[block_loop_iteration]
+        else:  # "none"
+            output = iter_output
 
-            # Scaling: apply to delta (iter_output - loop_input)
-            if self.block_loop_scaling == "uniform":
-                delta = iter_output - loop_input
-                hidden_states = hidden_states + delta / self.block_loop_iterations
-            elif self.block_loop_scaling == "learned_gate":
-                delta = iter_output - loop_input
-                hidden_states = hidden_states + delta * self.block_loop_gate[iteration]
-            else:  # "none"
-                hidden_states = iter_output
-
-        return hidden_states, context
+        return output, context
 
     def _forward_attention(
         self,
