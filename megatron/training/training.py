@@ -250,6 +250,9 @@ def num_floating_point_operations(args, batch_size):
         moe_num_iterations = getattr(args, 'moe_num_iterations', 1)
         # Block Loop: full block (attention + MoE) is repeated block_loop_iterations times per layer
         block_loop_iterations = getattr(args, 'block_loop_iterations', 1)
+        # Deep-Routed MoE: skip attention on pass 2+, so attention FLOPs = 1x
+        block_loop_skip_attention = getattr(args, 'block_loop_skip_attention', False)
+        attn_loop_iterations = 1 if block_loop_skip_attention else block_loop_iterations
         # SwiGLU.
         gated_linear_multiplier = 3 / 2 if args.swiglu else 1
 
@@ -346,8 +349,8 @@ def num_floating_point_operations(args, batch_size):
                     * gated_linear_multiplier
                 ) * (num_moe_layers/num_layers)
             )
-            # Self Attention (multiplied by block_loop_iterations for full-block looping)
-            + block_loop_iterations * self_attn_term
+            # Self Attention (1x if skip_attention, Nx otherwise)
+            + attn_loop_iterations * self_attn_term
             # MTP norms and proj
             + 3*2
             * mtp_num_layers

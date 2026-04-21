@@ -557,6 +557,12 @@ class TransformerConfig(ModelParallelConfig):
     'global': one shared (N, hidden_size) embedding across all layers.
     Only meaningful when block_loop_iterations >= 2."""
 
+    block_loop_skip_attention: bool = False
+    """Skip self-attention on iteration >= 1 in block loop (Deep-Routed MoE).
+    When enabled, pass 1 runs full Attn+MoE, pass 2+ runs MoE only.
+    This makes block_loop iso-FLOPs with higher topk.
+    Only meaningful when block_loop_iterations >= 2."""
+
     ##################
     # Context Parallel
     ##################

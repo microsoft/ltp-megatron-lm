@@ -346,6 +346,7 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
         self.block_loop_iterations = config.block_loop_iterations
         if self.block_loop_iterations > 1:
             self.block_loop_scaling = config.block_loop_scaling
+            self.block_loop_skip_attention = config.block_loop_skip_attention
 
             # Per-layer iteration embedding: shape (N, hidden_size)
             if config.block_loop_embedding == "per_layer":
@@ -443,10 +444,24 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
         if self.block_loop_embedding is not None:
             loop_input = loop_input + self.block_loop_embedding[block_loop_iteration]
 
-        # Run attention + MLP
-        iter_kwargs = dict(kwargs)
-        iter_kwargs['hidden_states'] = loop_input
-        pre_mlp, residual, context = self._forward_attention(**iter_kwargs)
+        # Run attention (or skip) + MLP
+        skip_attn = self.block_loop_skip_attention and block_loop_iteration > 0
+        if skip_attn:
+            # Deep-Routed MoE: skip attention, only run MLP/MoE
+            # Use pre_mlp_layernorm on loop_input directly (same as _forward_attention's final step)
+            residual = loop_input
+            if self.recompute_pre_mlp_layernorm:
+                self.pre_mlp_norm_checkpoint = tensor_parallel.CheckpointWithoutOutput()
+                pre_mlp = self.pre_mlp_norm_checkpoint.checkpoint(
+                    self.pre_mlp_layernorm, loop_input
+                )
+            else:
+                pre_mlp = self.pre_mlp_layernorm(loop_input)
+            context = None
+        else:
+            iter_kwargs = dict(kwargs)
+            iter_kwargs['hidden_states'] = loop_input
+            pre_mlp, residual, context = self._forward_attention(**iter_kwargs)
         iter_output = self._forward_mlp(pre_mlp, residual)
 
         # Scaling on delta

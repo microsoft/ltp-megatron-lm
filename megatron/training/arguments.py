@@ -2694,6 +2694,10 @@ def _add_moe_args(parser):
                        help='Iteration embedding mode for block loop: '
                        'none (no embedding), per_layer (each layer has own embedding), '
                        'global (one shared embedding across all layers).')
+    group.add_argument('--block-loop-skip-attention', action='store_true', default=False,
+                       help='Skip self-attention on iteration >= 1 in block loop '
+                       '(Deep-Routed MoE). Pass 1 runs full Attn+MoE, pass 2+ '
+                       'runs MoE only. Makes block loop iso-FLOPs with higher topk.')
 
     return parser
 

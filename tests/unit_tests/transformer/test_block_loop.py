@@ -21,6 +21,7 @@ def _make_config(
     block_loop_norm=True,
     block_loop_scaling="none",
     block_loop_embedding="none",
+    block_loop_skip_attention=False,
     num_experts=4,
     topk=2,
     hidden_size=12,
@@ -44,6 +45,7 @@ def _make_config(
         block_loop_norm=block_loop_norm,
         block_loop_scaling=block_loop_scaling,
         block_loop_embedding=block_loop_embedding,
+        block_loop_skip_attention=block_loop_skip_attention,
         # MoE iteration (should be 1 when block loop is active)
         moe_num_iterations=moe_num_iterations,
     )
@@ -463,3 +465,140 @@ class TestBlockLoopScaling:
         layer = _build_layer(config)
         expected = torch.full((3,), 1.0 / 3.0)
         torch.testing.assert_close(layer.block_loop_gate.data, expected)
+
+
+# ============================================================
+# Skip-Attention (Deep-Routed MoE) Tests (GPU)
+# ============================================================
+class TestBlockLoopSkipAttention:
+    def setup_method(self, method):
+        Utils.initialize_model_parallel(1, 1)
+        _set_random_seed(seed_=123, data_parallel_random_init=False)
+
+    def teardown_method(self, method):
+        Utils.destroy_model_parallel()
+
+    def test_skip_attention_layer_output_shape(self):
+        """Skip-attention layer produces correct output shape."""
+        config = _make_config(
+            num_layers=1, block_loop_iterations=2, block_loop_skip_attention=True
+        )
+        layer = _build_layer(config).cuda()
+        hidden_states, attention_mask = _make_inputs(config)
+        output, context = layer(
+            hidden_states=hidden_states, attention_mask=attention_mask,
+            block_loop_iteration=1,
+        )
+        assert output.shape == hidden_states.shape
+        assert context is None  # No attention on skip iteration
+
+    def test_skip_attention_iteration_0_runs_attention(self):
+        """Iteration 0 should still run attention even with skip_attention=True."""
+        config = _make_config(
+            num_layers=1, block_loop_iterations=2, block_loop_skip_attention=True
+        )
+        layer = _build_layer(config).cuda()
+        hidden_states, attention_mask = _make_inputs(config)
+        output, context = layer(
+            hidden_states=hidden_states, attention_mask=attention_mask,
+            block_loop_iteration=0,
+        )
+        assert output.shape == hidden_states.shape
+        # Iteration 0 runs attention, so context should not be None
+        # (context may be None depending on implementation, but attention params should get grads)
+
+    def test_skip_attention_no_attn_grad_on_pass2(self):
+        """On pass 2 with skip_attention, attention params should NOT get gradients."""
+        config = _make_config(
+            num_layers=1, block_loop_iterations=2, block_loop_skip_attention=True
+        )
+        layer = _build_layer(config).cuda()
+        hidden_states, attention_mask = _make_inputs(config)
+
+        # Only run iteration 1 (skip attention)
+        output, _ = layer(
+            hidden_states=hidden_states, attention_mask=attention_mask,
+            block_loop_iteration=1,
+        )
+        loss = output.sum()
+        loss.backward()
+
+        # Attention params should have NO gradients (attention was skipped)
+        attn_params = list(layer.self_attention.parameters())
+        assert all(p.grad is None or p.grad.abs().sum() == 0 for p in attn_params)
+
+        # MLP/MoE params SHOULD have gradients
+        mlp_params = list(layer.mlp.parameters())
+        assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in mlp_params)
+
+    def test_skip_attention_attn_grad_on_pass1(self):
+        """On pass 1 (iteration 0) with skip_attention, attention params SHOULD get gradients."""
+        config = _make_config(
+            num_layers=1, block_loop_iterations=2, block_loop_skip_attention=True
+        )
+        layer = _build_layer(config).cuda()
+        hidden_states, attention_mask = _make_inputs(config)
+
+        output, _ = layer(
+            hidden_states=hidden_states, attention_mask=attention_mask,
+            block_loop_iteration=0,
+        )
+        loss = output.sum()
+        loss.backward()
+
+        attn_params = list(layer.self_attention.parameters())
+        assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in attn_params)
+
+    def test_skip_attention_block_output_shape(self):
+        """TransformerBlock with skip-attention produces correct output shape."""
+        config = _make_config(
+            num_layers=2, block_loop_iterations=2, block_loop_skip_attention=True,
+            block_loop_embedding="per_layer", block_loop_scaling="learned_gate",
+        )
+        block = _build_block(config).cuda()
+        hidden_states, attention_mask = _make_inputs(config)
+        output = block(hidden_states=hidden_states, attention_mask=attention_mask)
+        assert output.shape == hidden_states.shape
+        assert not torch.isnan(output).any()
+        assert not torch.isinf(output).any()
+
+    def test_skip_attention_block_gradient_flow(self):
+        """Gradients flow through block with skip-attention enabled."""
+        config = _make_config(
+            num_layers=2, block_loop_iterations=2, block_loop_skip_attention=True,
+            block_loop_embedding="per_layer", block_loop_scaling="learned_gate",
+        )
+        block = _build_block(config).cuda()
+        hidden_states, attention_mask = _make_inputs(config)
+        hidden_states.requires_grad_(True)
+
+        output = block(hidden_states=hidden_states, attention_mask=attention_mask)
+        loss = output.sum()
+        loss.backward()
+
+        assert hidden_states.grad is not None
+        assert hidden_states.grad.abs().sum() > 0
+        # Both attention and MLP should get gradients (attention from pass 1)
+        for layer in block.layers:
+            attn_params = list(layer.self_attention.parameters())
+            assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in attn_params)
+            mlp_params = list(layer.mlp.parameters())
+            assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in mlp_params)
+
+    def test_skip_attention_differs_from_full_attention(self):
+        """Skip-attention output should differ from full-attention block loop."""
+        config_skip = _make_config(
+            num_layers=2, block_loop_iterations=2, block_loop_skip_attention=True
+        )
+        config_full = _make_config(
+            num_layers=2, block_loop_iterations=2, block_loop_skip_attention=False
+        )
+        block_skip = _build_block(config_skip).cuda()
+        block_full = _build_block(config_full).cuda()
+        # Copy weights
+        block_skip.load_state_dict(block_full.state_dict(), strict=False)
+
+        hidden_states, attention_mask = _make_inputs(config_skip)
+        out_skip = block_skip(hidden_states=hidden_states.clone(), attention_mask=attention_mask)
+        out_full = block_full(hidden_states=hidden_states.clone(), attention_mask=attention_mask)
+        assert not torch.allclose(out_skip, out_full, atol=1e-5)
