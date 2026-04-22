@@ -563,6 +563,11 @@ class TransformerConfig(ModelParallelConfig):
     This makes block_loop iso-FLOPs with higher topk.
     Only meaningful when block_loop_iterations >= 2."""
 
+    layer_learnable_bias: bool = False
+    """Add a learnable bias vector (hidden_size,) to each TransformerLayer's input.
+    Independent of block loop. Used for ablation: test whether per-layer embedding
+    gains come from loop or just from extra parameters."""
+
     ##################
     # Context Parallel
     ##################

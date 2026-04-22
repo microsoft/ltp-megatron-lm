@@ -380,6 +380,14 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
             else:
                 self.block_loop_gate = None
 
+        # Per-layer learnable bias (independent of block loop)
+        if config.layer_learnable_bias:
+            self.layer_bias = torch.nn.Parameter(
+                torch.empty(self.config.hidden_size).normal_(std=0.02)
+            )
+        else:
+            self.layer_bias = None
+
         self.recompute_input_layernorm = False
         self.recompute_pre_mlp_layernorm = False
         self.recompute_mlp = False
@@ -426,6 +434,14 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
         """
         if block_loop_iteration is None:
             # Standard path: no block loop or N=1
+            if self.layer_bias is not None:
+                hidden_states = kwargs.get('hidden_states', args[0] if args else None)
+                hidden_states = hidden_states + self.layer_bias
+                if 'hidden_states' in kwargs:
+                    kwargs = dict(kwargs)
+                    kwargs['hidden_states'] = hidden_states
+                else:
+                    args = (hidden_states,) + args[1:]
             pre_mlp_layernorm_output, residual, context = self._forward_attention(
                 *args, **kwargs
             )

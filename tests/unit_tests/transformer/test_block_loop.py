@@ -22,6 +22,7 @@ def _make_config(
     block_loop_scaling="none",
     block_loop_embedding="none",
     block_loop_skip_attention=False,
+    layer_learnable_bias=False,
     num_experts=4,
     topk=2,
     hidden_size=12,
@@ -46,6 +47,7 @@ def _make_config(
         block_loop_scaling=block_loop_scaling,
         block_loop_embedding=block_loop_embedding,
         block_loop_skip_attention=block_loop_skip_attention,
+        layer_learnable_bias=layer_learnable_bias,
         # MoE iteration (should be 1 when block loop is active)
         moe_num_iterations=moe_num_iterations,
     )
@@ -602,3 +604,38 @@ class TestBlockLoopSkipAttention:
         out_skip = block_skip(hidden_states=hidden_states.clone(), attention_mask=attention_mask)
         out_full = block_full(hidden_states=hidden_states.clone(), attention_mask=attention_mask)
         assert not torch.allclose(out_skip, out_full, atol=1e-5)
+
+
+# ============================================================
+# Per-Layer Learnable Bias Tests (GPU)
+# ============================================================
+class TestLayerLearnableBias:
+    def setup_method(self, method):
+        Utils.initialize_model_parallel(1, 1)
+        _set_random_seed(seed_=123, data_parallel_random_init=False)
+
+    def teardown_method(self, method):
+        Utils.destroy_model_parallel()
+
+    def test_bias_created(self):
+        config = _make_config(num_layers=1, layer_learnable_bias=True)
+        layer = _build_layer(config)
+        assert layer.layer_bias is not None
+        assert layer.layer_bias.shape == (config.hidden_size,)
+
+    def test_bias_not_created_when_disabled(self):
+        config = _make_config(num_layers=1, layer_learnable_bias=False)
+        layer = _build_layer(config)
+        assert layer.layer_bias is None
+
+    def test_bias_gradient_flow(self):
+        config = _make_config(num_layers=1, layer_learnable_bias=True)
+        layer = _build_layer(config).cuda()
+        hidden_states, attention_mask = _make_inputs(config)
+
+        output, _ = layer(hidden_states=hidden_states, attention_mask=attention_mask)
+        loss = output.sum()
+        loss.backward()
+
+        assert layer.layer_bias.grad is not None
+        assert layer.layer_bias.grad.abs().sum() > 0
