@@ -26,6 +26,45 @@ from torch import Tensor
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 
+# ---------------------------------------------------------------------------
+# Triton autotuner compatibility patch for ROCm (triton 3.1.0)
+# ---------------------------------------------------------------------------
+# FLA's kernels use tl.constexpr params (BT, BK, BV) in @triton.autotune(key=[...]).
+# Triton 3.1.0 (ROCm) excludes constexpr params from JITFunction.arg_names,
+# causing ValueError('X is not in list') when Autotuner.__init__ computes key_idx.
+# Triton >=3.5.0 (CUDA) includes all params and uses dict-based lookup, so no issue.
+#
+# Fix: Before importing FLA, extend arg_names with missing key params from the
+# original function signature so that key_idx resolution succeeds.
+# ---------------------------------------------------------------------------
+def _apply_triton_autotuner_patch():
+    """Patch triton Autotuner to handle constexpr params in autotune key."""
+    try:
+        import inspect
+        from triton.runtime.autotuner import Autotuner
+
+        _orig_init = Autotuner.__init__
+
+        def _patched_init(self, fn, arg_names, configs, key, *args, **kwargs):
+            missing = [k for k in key if k not in arg_names]
+            if missing:
+                orig_fn = getattr(fn, 'fn', None)
+                if orig_fn is not None:
+                    all_params = list(inspect.signature(orig_fn).parameters.keys())
+                    arg_names = list(arg_names) + [
+                        p for p in all_params if p not in arg_names and p in key
+                    ]
+            _orig_init(self, fn, arg_names, configs, key, *args, **kwargs)
+
+        Autotuner.__init__ = _patched_init
+        return True
+    except Exception:
+        return False
+
+
+# Apply patch before importing FLA (decorator fires at import time).
+_apply_triton_autotuner_patch()
+
 # Try FLA triton kernel first (fastest); fall back to inlined pure-PyTorch.
 try:
     from fla.ops.gated_delta_rule import chunk_gated_delta_rule
