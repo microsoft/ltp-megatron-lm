@@ -43,14 +43,44 @@ def _l2norm(x: Tensor) -> Tensor:
 
 
 def _chunk_loop_body(
-    q_i, k_i, v_i, k_cumdecay_i, L_mask_i, decay_i, S, mask2,
+    q_i, k_i, v_i, k_beta_i, g_i, S, mask_upper, mask_strict_upper, BT,
 ):
-    """One chunk iteration, factored out for gradient checkpointing."""
-    attn_i = (q_i @ k_i.transpose(-1, -2) * L_mask_i).masked_fill_(mask2, 0)
+    """One chunk iteration with per-chunk intra-chunk computation.
+
+    Computes L_mask, attn, k_cumsum, k_cumdecay locally per chunk
+    to avoid storing them for all chunks simultaneously.
+    """
+    dtype = q_i.dtype
+
+    # Per-chunk decay cumsum (float32 for stability, then back)
+    decay_i = g_i.float().cumsum(-1).to(dtype)  # [b, h, c]
+    decay_exp_i = decay_i.exp()[..., None]  # [b, h, c, 1]
+
+    # Per-chunk causal decay mask
+    L_mask_i = (
+        (decay_i.unsqueeze(-1) - decay_i.unsqueeze(-2)).tril().exp()
+    ).tril()  # [b, h, c, c]
+
+    # Per-chunk Neumann series for (I - K_beta @ K^T)^{-1}
+    attn_i = -((k_beta_i @ k_i.transpose(-1, -2)) * L_mask_i).masked_fill(mask_upper, 0)
+    for j in range(1, BT):
+        attn_i[..., j, :j] = attn_i[..., j, :j].clone() + (
+            attn_i[..., j, :j, None].clone() * attn_i[..., :j, :j].clone()
+        ).sum(-2)
+    attn_i = attn_i + torch.eye(BT, dtype=dtype, device=q_i.device)
+
+    # Intra-chunk transformed v and k_cumdecay
+    v_transformed = attn_i @ v_i  # k_cumsum for this chunk
+    k_cumdecay_i = attn_i @ (k_beta_i * decay_exp_i)
+
+    # Inter-chunk: query state S
+    qk_attn = (q_i @ k_i.transpose(-1, -2) * L_mask_i).masked_fill_(mask_strict_upper, 0)
     v_prime = k_cumdecay_i @ S
-    v_new = v_i - v_prime
+    v_new = v_transformed - v_prime
     o_inter = (q_i * decay_i[:, :, :, None].exp()) @ S
-    o_i = o_inter + attn_i @ v_new
+    o_i = o_inter + qk_attn @ v_new
+
+    # Update state
     S_new = S * decay_i[:, :, -1, None, None].exp() + (
         k_i * (decay_i[:, :, -1, None] - decay_i).exp()[..., None]
     ).transpose(-1, -2) @ v_new
@@ -71,8 +101,10 @@ def _naive_chunk_gated_delta_rule(
 ):
     """Pure-PyTorch chunked gated delta rule (adapted from FLA, MIT license).
 
-    Memory-optimized: stays in input dtype (bf16), only uses float32 for
-    decay cumsum. Chunk loop optionally uses gradient checkpointing.
+    Memory-optimized:
+    - Stays in input dtype (bf16), only decay cumsum uses float32
+    - Per-chunk computation of L_mask/attn/k_cumdecay (no global [b,h,n,c,c] tensors)
+    - Chunk loop optionally uses gradient checkpointing
 
     Args:
         q: [B, T, H, K]
@@ -112,59 +144,47 @@ def _naive_chunk_gated_delta_rule(
     v = v * beta[..., None]
     k_beta = k * beta[..., None]
     assert l % BT == 0
+    n_chunks = l // BT
 
-    mask = torch.triu(
-        torch.ones(BT, BT, dtype=torch.bool, device=q.device), diagonal=0
-    )
+    # Rearrange to chunks: [b, h, n, c, d]
     q, k, v, k_beta = map(
         lambda x: rearrange(x, 'b h (n c) d -> b h n c d', c=BT),
         [q, k, v, k_beta],
     )
-    # decay cumsum in float32 for numerical stability, then cast back
-    decay = rearrange(g.unsqueeze(-1), 'b h (n c) d -> b h n c d', c=BT)
-    decay = decay.squeeze(-1).float().cumsum(-1).to(dtype)
-    decay_exp = decay.exp()[..., None]
-    L_mask = (
-        (decay.unsqueeze(-1) - decay.unsqueeze(-2)).tril().exp()
-    ).tril()
-    attn = -((k_beta @ k.transpose(-1, -2)) * L_mask).masked_fill(mask, 0)
-    for i in range(1, BT):
-        attn[..., i, :i] = attn[..., i, :i].clone() + (
-            attn[..., i, :i, None].clone() * attn[..., :i, :i].clone()
-        ).sum(-2)
-    attn = attn + torch.eye(BT, dtype=dtype, device=q.device)
-    k_cumsum = attn @ v
-    k_cumdecay = attn @ (k_beta * decay_exp)
-    v = k_cumsum
+    # g stays as [b, h, n, c] (raw, cumsum done per-chunk inside loop body)
+    g = rearrange(g, 'b h (n c) -> b h n c', c=BT)
+
+    mask_upper = torch.triu(
+        torch.ones(BT, BT, dtype=torch.bool, device=q.device), diagonal=0
+    )
+    mask_strict_upper = torch.triu(
+        torch.ones(BT, BT, dtype=torch.bool, device=q.device), diagonal=1
+    )
 
     S = k.new_zeros(b, h, d_k, d_v)
     if initial_state is not None:
         S = initial_state.to(dtype)
 
-    o = torch.zeros_like(v)
-    mask2 = torch.triu(
-        torch.ones(BT, BT, dtype=torch.bool, device=q.device), diagonal=1
-    )
-    for i in range(0, l // BT):
+    o_chunks = []
+    for i in range(n_chunks):
         if use_checkpoint:
             o_i, S = torch.utils.checkpoint.checkpoint(
                 _chunk_loop_body,
-                q[:, :, i], k[:, :, i], v[:, :, i],
-                k_cumdecay[:, :, i], L_mask[:, :, i], decay[:, :, i],
-                S, mask2,
+                q[:, :, i], k[:, :, i], v[:, :, i], k_beta[:, :, i],
+                g[:, :, i], S, mask_upper, mask_strict_upper, BT,
                 use_reentrant=False,
             )
         else:
             o_i, S = _chunk_loop_body(
-                q[:, :, i], k[:, :, i], v[:, :, i],
-                k_cumdecay[:, :, i], L_mask[:, :, i], decay[:, :, i],
-                S, mask2,
+                q[:, :, i], k[:, :, i], v[:, :, i], k_beta[:, :, i],
+                g[:, :, i], S, mask_upper, mask_strict_upper, BT,
             )
-        o[:, :, i] = o_i
+        o_chunks.append(o_i)
 
     if not output_final_state:
         S = None
 
+    o = torch.stack(o_chunks, dim=2)  # [b, h, n, c, d]
     o = rearrange(o, 'b h n c d -> b h (n c) d')
     o = o[:, :, :T]
     o = o.transpose(1, 2)
