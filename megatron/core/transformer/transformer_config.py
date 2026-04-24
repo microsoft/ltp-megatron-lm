@@ -568,6 +568,20 @@ class TransformerConfig(ModelParallelConfig):
     Independent of block loop. Used for ablation: test whether per-layer embedding
     gains come from loop or just from extra parameters."""
 
+    block_loop_linear_attention: bool = False
+    """Use Gated Delta Rule (GDR) linear attention instead of softmax attention
+    on block loop iteration >= 1. Pass 1 uses standard softmax attention,
+    pass 2+ uses O(n) linear attention for cheap cross-token mixing.
+    Requires flash-linear-attention (FLA) library.
+    Only meaningful when block_loop_iterations >= 2."""
+
+    block_loop_all_linear_attention: bool = False
+    """Use GDR linear attention on ALL passes (including pass 1).
+    When enabled, softmax attention is completely replaced by GDR linear
+    attention on every iteration. FLOPs ~0.9x of baseline (cheaper than
+    standard single-pass softmax). Implies block_loop_linear_attention.
+    Requires flash-linear-attention (FLA) library."""
+
     ##################
     # Context Parallel
     ##################

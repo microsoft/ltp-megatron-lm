@@ -2700,6 +2700,13 @@ def _add_moe_args(parser):
                        'runs MoE only. Makes block loop iso-FLOPs with higher topk.')
     group.add_argument('--layer-learnable-bias', action='store_true', default=False,
                        help='Add a learnable bias to each layer input (ablation).')
+    group.add_argument('--block-loop-linear-attention', action='store_true', default=False,
+                       help='Use GDR linear attention on block loop iteration >= 1. '
+                       'Pass 1 uses softmax, pass 2+ uses O(n) linear attention. '
+                       'Requires flash-linear-attention library.')
+    group.add_argument('--block-loop-all-linear-attention', action='store_true', default=False,
+                       help='Use GDR linear attention on ALL passes (including pass 1). '
+                       'Replaces softmax entirely. Implies --block-loop-linear-attention.')
 
     return parser
 

@@ -380,6 +380,21 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
             else:
                 self.block_loop_gate = None
 
+            # Block loop linear attention (GDR) for pass 2+ (or all passes)
+            if config.block_loop_linear_attention or config.block_loop_all_linear_attention:
+                from megatron.core.transformer.gated_delta_attention import (
+                    GatedDeltaRuleAttention,
+                )
+
+                self.linear_core_attention = GatedDeltaRuleAttention(
+                    config=config,
+                    layer_number=self.layer_number,
+                )
+                self.all_linear_attention = config.block_loop_all_linear_attention
+            else:
+                self.linear_core_attention = None
+                self.all_linear_attention = False
+
         # Per-layer learnable bias (independent of block loop)
         if config.layer_learnable_bias:
             self.layer_bias = torch.nn.Parameter(
@@ -462,6 +477,10 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
 
         # Run attention (or skip) + MLP
         skip_attn = self.block_loop_skip_attention and block_loop_iteration > 0
+        use_linear = (
+            self.linear_core_attention is not None
+            and (self.all_linear_attention or block_loop_iteration > 0)
+        )
         if skip_attn:
             # Deep-Routed MoE: skip attention, only run MLP/MoE
             # Use pre_mlp_layernorm on loop_input directly (same as _forward_attention's final step)
@@ -475,9 +494,15 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
                 pre_mlp = self.pre_mlp_layernorm(loop_input)
             context = None
         else:
+            # Swap core_attention to linear GDR for pass 2+ if enabled
+            if use_linear:
+                saved_core_attn = self.self_attention.core_attention
+                self.self_attention.core_attention = self.linear_core_attention
             iter_kwargs = dict(kwargs)
             iter_kwargs['hidden_states'] = loop_input
             pre_mlp, residual, context = self._forward_attention(**iter_kwargs)
+            if use_linear:
+                self.self_attention.core_attention = saved_core_attn
         iter_output = self._forward_mlp(pre_mlp, residual)
 
         # Scaling on delta

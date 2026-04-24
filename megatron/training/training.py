@@ -252,6 +252,9 @@ def num_floating_point_operations(args, batch_size):
         block_loop_iterations = getattr(args, 'block_loop_iterations', 1)
         # Deep-Routed MoE: skip attention on pass 2+, so attention FLOPs = 1x
         block_loop_skip_attention = getattr(args, 'block_loop_skip_attention', False)
+        # Linear attention: QKV projections same cost, core attn O(n*d^2) ≈ 0 vs O(n^2*d)
+        block_loop_linear_attention = getattr(args, 'block_loop_linear_attention', False)
+        block_loop_all_linear_attention = getattr(args, 'block_loop_all_linear_attention', False)
         attn_loop_iterations = 1 if block_loop_skip_attention else block_loop_iterations
         # SwiGLU.
         gated_linear_multiplier = 3 / 2 if args.swiglu else 1
@@ -306,10 +309,13 @@ def num_floating_point_operations(args, batch_size):
                     + args.seq_length * args.num_attention_heads * args.v_head_dim / 2
                 )
             )
+            # MLA: no proj/core split — treat linear attn same as softmax for FLOPs
+            attn_proj_term = self_attn_term
 
         else:
             ## MHA or GQA
-            self_attn_term = (
+            # QKV + O projections (same cost for softmax and linear attention)
+            attn_proj_term = (
                 expansion_factor
                 * num_layers
                 * args.hidden_size
@@ -318,11 +324,38 @@ def num_floating_point_operations(args, batch_size):
                     (
                         1
                         + (args.num_query_groups / args.num_attention_heads)
-                        # # Only half of the attention matrix is non-zero and needs to be multiplied with V.
-                        + (args.seq_length / args.hidden_size / 2)
                     ) * query_projection_to_hidden_size_ratio
                 )
             )
+            # Core attention: QK^T + attn*V (O(s^2) — softmax only, ~0 for linear)
+            core_attn_term = (
+                expansion_factor
+                * num_layers
+                * args.hidden_size
+                * args.hidden_size
+                * (
+                    (args.seq_length / args.hidden_size / 2)
+                    * query_projection_to_hidden_size_ratio
+                )
+            )
+            self_attn_term = attn_proj_term + core_attn_term
+
+        # Compute effective attention FLOPs across block loop iterations
+        if block_loop_skip_attention:
+            # Deep-Routed MoE: attention only on pass 1
+            effective_attn_term = self_attn_term
+        elif block_loop_all_linear_attention:
+            # All-linear: every pass uses linear attention (no core_attn FLOPs)
+            effective_attn_term = block_loop_iterations * attn_proj_term
+        elif block_loop_linear_attention:
+            # Hybrid: pass 1 softmax (full), pass 2+ linear (projections only)
+            effective_attn_term = (
+                self_attn_term  # pass 1: softmax
+                + (block_loop_iterations - 1) * attn_proj_term  # pass 2+: linear
+            )
+        else:
+            # Standard: all passes use softmax
+            effective_attn_term = block_loop_iterations * self_attn_term
 
         total_floating_point_operations = batch_size * args.seq_length * (
             # MLP (multiplied by block_loop_iterations for full-block looping)
@@ -349,8 +382,8 @@ def num_floating_point_operations(args, batch_size):
                     * gated_linear_multiplier
                 ) * (num_moe_layers/num_layers)
             )
-            # Self Attention (1x if skip_attention, Nx otherwise)
-            + attn_loop_iterations * self_attn_term
+            # Self Attention
+            + effective_attn_term
             # MTP norms and proj
             + 3*2
             * mtp_num_layers

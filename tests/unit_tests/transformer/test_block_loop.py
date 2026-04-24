@@ -22,6 +22,8 @@ def _make_config(
     block_loop_scaling="none",
     block_loop_embedding="none",
     block_loop_skip_attention=False,
+    block_loop_linear_attention=False,
+    block_loop_all_linear_attention=False,
     layer_learnable_bias=False,
     num_experts=4,
     topk=2,
@@ -47,6 +49,8 @@ def _make_config(
         block_loop_scaling=block_loop_scaling,
         block_loop_embedding=block_loop_embedding,
         block_loop_skip_attention=block_loop_skip_attention,
+        block_loop_linear_attention=block_loop_linear_attention,
+        block_loop_all_linear_attention=block_loop_all_linear_attention,
         layer_learnable_bias=layer_learnable_bias,
         # MoE iteration (should be 1 when block loop is active)
         moe_num_iterations=moe_num_iterations,
@@ -639,3 +643,190 @@ class TestLayerLearnableBias:
 
         assert layer.layer_bias.grad is not None
         assert layer.layer_bias.grad.abs().sum() > 0
+
+
+class TestBlockLoopLinearAttention:
+    """Tests for GDR linear attention on block loop pass 2+."""
+
+    def setup_method(self, method):
+        Utils.initialize_model_parallel(1, 1)
+        _set_random_seed(seed_=123, data_parallel_random_init=False)
+
+    def teardown_method(self, method):
+        Utils.destroy_model_parallel()
+
+    @pytest.fixture(autouse=True)
+    def _check_fla(self):
+        pytest.importorskip("fla", reason="flash-linear-attention not installed")
+
+    def test_linear_attention_module_created(self):
+        config = _make_config(
+            num_layers=1, block_loop_iterations=2, block_loop_linear_attention=True
+        )
+        layer = _build_layer(config)
+        assert layer.linear_core_attention is not None
+
+    def test_linear_attention_not_created_n1(self):
+        config = _make_config(
+            num_layers=1, block_loop_iterations=1, block_loop_linear_attention=True
+        )
+        layer = _build_layer(config)
+        assert not hasattr(layer, 'linear_core_attention') or layer.linear_core_attention is None
+
+    def test_linear_attention_not_created_when_disabled(self):
+        config = _make_config(
+            num_layers=1, block_loop_iterations=2, block_loop_linear_attention=False
+        )
+        layer = _build_layer(config)
+        assert layer.linear_core_attention is None
+
+    def test_layer_forward_pass1_uses_softmax(self):
+        """Pass 1 (iteration=0) should use standard softmax attention."""
+        config = _make_config(
+            num_layers=1, block_loop_iterations=2, block_loop_linear_attention=True
+        )
+        layer = _build_layer(config).cuda()
+        hidden_states, attention_mask = _make_inputs(config)
+
+        output, context = layer(
+            hidden_states=hidden_states, attention_mask=attention_mask,
+            block_loop_iteration=0,
+        )
+        assert output.shape == hidden_states.shape
+
+    def test_layer_forward_pass2_uses_linear(self):
+        """Pass 2 (iteration=1) should use GDR linear attention."""
+        config = _make_config(
+            num_layers=1, block_loop_iterations=2, block_loop_linear_attention=True
+        )
+        layer = _build_layer(config).cuda()
+        hidden_states, attention_mask = _make_inputs(config)
+
+        output, context = layer(
+            hidden_states=hidden_states, attention_mask=attention_mask,
+            block_loop_iteration=1,
+        )
+        assert output.shape == hidden_states.shape
+
+    def test_pass1_vs_pass2_differ(self):
+        """Linear attention (pass 2) should produce different output than softmax (pass 1)."""
+        config = _make_config(
+            num_layers=1, block_loop_iterations=2, block_loop_linear_attention=True
+        )
+        layer = _build_layer(config).cuda()
+        hidden_states, attention_mask = _make_inputs(config)
+
+        out1, _ = layer(
+            hidden_states=hidden_states, attention_mask=attention_mask,
+            block_loop_iteration=0,
+        )
+        out2, _ = layer(
+            hidden_states=hidden_states, attention_mask=attention_mask,
+            block_loop_iteration=1,
+        )
+        assert not torch.allclose(out1, out2, atol=1e-5)
+
+    def test_gradient_flow_through_linear_attention(self):
+        """Gradients should flow through the GDR linear attention module."""
+        config = _make_config(
+            num_layers=1, block_loop_iterations=2, block_loop_linear_attention=True
+        )
+        layer = _build_layer(config).cuda()
+        hidden_states, attention_mask = _make_inputs(config)
+
+        output, _ = layer(
+            hidden_states=hidden_states, attention_mask=attention_mask,
+            block_loop_iteration=1,
+        )
+        loss = output.sum()
+        loss.backward()
+
+        # GDR module params should have gradients
+        gdr = layer.linear_core_attention
+        assert gdr.A_log.grad is not None
+        assert gdr.dt_bias.grad is not None
+        assert gdr.beta_proj.weight.grad is not None
+
+    def test_block_forward_with_linear_attention(self):
+        """Full TransformerBlock forward with linear attention on pass 2."""
+        config = _make_config(
+            num_layers=2, block_loop_iterations=2, block_loop_linear_attention=True,
+            block_loop_embedding="per_layer",
+        )
+        block = _build_block(config).cuda()
+        hidden_states, attention_mask = _make_inputs(config)
+
+        output = block(hidden_states=hidden_states, attention_mask=attention_mask)
+        assert output.shape == hidden_states.shape
+
+    def test_block_gradient_flow_with_linear_attention(self):
+        """Gradients should flow through block with linear attention."""
+        config = _make_config(
+            num_layers=2, block_loop_iterations=2, block_loop_linear_attention=True,
+        )
+        block = _build_block(config).cuda()
+        hidden_states, attention_mask = _make_inputs(config)
+
+        output = block(hidden_states=hidden_states, attention_mask=attention_mask)
+        loss = output.sum()
+        loss.backward()
+
+        # Check that linear attention params in each layer have gradients
+        for layer in block.layers:
+            gdr = layer.linear_core_attention
+            assert gdr.A_log.grad is not None
+
+    def test_all_linear_attention_module_created(self):
+        """all_linear_attention creates GDR module and sets all_linear flag."""
+        config = _make_config(
+            num_layers=1, block_loop_iterations=2,
+            block_loop_all_linear_attention=True,
+        )
+        layer = _build_layer(config)
+        assert layer.linear_core_attention is not None
+        assert layer.all_linear_attention is True
+
+    def test_all_linear_uses_gdr_on_pass1(self):
+        """With all_linear, pass 1 (iteration=0) should also use GDR."""
+        config = _make_config(
+            num_layers=1, block_loop_iterations=2,
+            block_loop_all_linear_attention=True,
+        )
+        layer = _build_layer(config).cuda()
+        hidden_states, attention_mask = _make_inputs(config)
+
+        output, _ = layer(
+            hidden_states=hidden_states, attention_mask=attention_mask,
+            block_loop_iteration=0,
+        )
+        assert output.shape == hidden_states.shape
+
+    def test_all_linear_block_forward(self):
+        """Full block forward with all-linear attention."""
+        config = _make_config(
+            num_layers=2, block_loop_iterations=2,
+            block_loop_all_linear_attention=True,
+            block_loop_embedding="per_layer",
+        )
+        block = _build_block(config).cuda()
+        hidden_states, attention_mask = _make_inputs(config)
+
+        output = block(hidden_states=hidden_states, attention_mask=attention_mask)
+        assert output.shape == hidden_states.shape
+
+    def test_all_linear_gradient_flow(self):
+        """Gradients flow through all-linear block."""
+        config = _make_config(
+            num_layers=2, block_loop_iterations=2,
+            block_loop_all_linear_attention=True,
+        )
+        block = _build_block(config).cuda()
+        hidden_states, attention_mask = _make_inputs(config)
+
+        output = block(hidden_states=hidden_states, attention_mask=attention_mask)
+        loss = output.sum()
+        loss.backward()
+
+        for layer_module in block.layers:
+            gdr = layer_module.linear_core_attention
+            assert gdr.A_log.grad is not None
