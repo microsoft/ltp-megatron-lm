@@ -29,12 +29,17 @@ def _make_config(
     topk=2,
     hidden_size=12,
     moe_num_iterations=1,
+    num_attention_heads=4,
+    num_query_groups=None,
 ):
     """Helper to create a TransformerConfig for block loop tests."""
+    kwargs = {}
+    if num_query_groups is not None:
+        kwargs['num_query_groups'] = num_query_groups
     return TransformerConfig(
         num_layers=num_layers,
         hidden_size=hidden_size,
-        num_attention_heads=4,
+        num_attention_heads=num_attention_heads,
         num_moe_experts=num_experts,
         use_cpu_initialization=True,
         moe_token_dispatcher_type="allgather",
@@ -54,6 +59,7 @@ def _make_config(
         layer_learnable_bias=layer_learnable_bias,
         # MoE iteration (should be 1 when block loop is active)
         moe_num_iterations=moe_num_iterations,
+        **kwargs,
     )
 
 
@@ -655,10 +661,6 @@ class TestBlockLoopLinearAttention:
     def teardown_method(self, method):
         Utils.destroy_model_parallel()
 
-    @pytest.fixture(autouse=True)
-    def _check_fla(self):
-        pytest.importorskip("fla", reason="flash-linear-attention not installed")
-
     def test_linear_attention_module_created(self):
         config = _make_config(
             num_layers=1, block_loop_iterations=2, block_loop_linear_attention=True
@@ -830,3 +832,38 @@ class TestBlockLoopLinearAttention:
         for layer_module in block.layers:
             gdr = layer_module.linear_core_attention
             assert gdr.A_log.grad is not None
+
+    def test_gqa_linear_attention_forward(self):
+        """GQA (num_query_groups < num_attention_heads) with linear attention."""
+        config = _make_config(
+            num_layers=1, block_loop_iterations=2, block_loop_linear_attention=True,
+            num_attention_heads=4, num_query_groups=2, hidden_size=16,
+        )
+        layer = _build_layer(config).cuda()
+        hidden_states, attention_mask = _make_inputs(config)
+
+        # Pass 2 uses GDR with GQA
+        output, _ = layer(
+            hidden_states=hidden_states, attention_mask=attention_mask,
+            block_loop_iteration=1,
+        )
+        assert output.shape == hidden_states.shape
+
+    def test_gqa_linear_attention_gradient(self):
+        """Gradients flow through GDR with GQA."""
+        config = _make_config(
+            num_layers=2, block_loop_iterations=2, block_loop_linear_attention=True,
+            num_attention_heads=4, num_query_groups=2, hidden_size=16,
+            block_loop_embedding="per_layer",
+        )
+        block = _build_block(config).cuda()
+        hidden_states, attention_mask = _make_inputs(config)
+
+        output = block(hidden_states=hidden_states, attention_mask=attention_mask)
+        loss = output.sum()
+        loss.backward()
+
+        for layer_module in block.layers:
+            gdr = layer_module.linear_core_attention
+            assert gdr.A_log.grad is not None
+            assert gdr.beta_proj.weight.grad is not None

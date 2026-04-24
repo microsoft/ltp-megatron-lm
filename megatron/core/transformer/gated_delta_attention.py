@@ -169,10 +169,12 @@ class GatedDeltaRuleAttention(MegatronModule):
 
         self.layer_number = layer_number
         self.head_dim = config.kv_channels
-        self.num_heads = (
-            config.num_attention_heads
-            // max(1, getattr(config, 'tensor_model_parallel_size', 1))
-        )
+        tp = max(1, getattr(config, 'tensor_model_parallel_size', 1))
+        self.num_heads = config.num_attention_heads // tp
+        # GQA: K/V may have fewer heads than Q
+        nqg = getattr(config, 'num_query_groups', None) or config.num_attention_heads
+        self.num_kv_heads = nqg // tp
+        self.kv_repeat = self.num_heads // self.num_kv_heads
 
         # Learnable decay parameter A_log: per head
         A = torch.empty(self.num_heads).uniform_(*A_init_range)
@@ -214,7 +216,13 @@ class GatedDeltaRuleAttention(MegatronModule):
         k = key.permute(1, 0, 2, 3).contiguous()
         v = value.permute(1, 0, 2, 3).contiguous()
 
-        b, sq, np, hn = q.shape
+        b, sq, np_q, hn = q.shape
+
+        # GQA: expand K/V heads to match Q heads
+        if self.kv_repeat > 1:
+            # [b, sq, np_kv, hn] -> [b, sq, np_kv, repeat, hn] -> [b, sq, np_q, hn]
+            k = k.unsqueeze(3).expand(-1, -1, -1, self.kv_repeat, -1).reshape(b, sq, np_q, hn)
+            v = v.unsqueeze(3).expand(-1, -1, -1, self.kv_repeat, -1).reshape(b, sq, np_q, hn)
 
         # L2 normalize Q, K (standard for delta rule to stabilize)
         if HAVE_FLA_TRITON:
@@ -226,7 +234,7 @@ class GatedDeltaRuleAttention(MegatronModule):
 
         # Compute gate g: per-head decay
         g = -self.A_log.float().exp() * F.softplus(self.dt_bias.float())
-        g = g.view(1, 1, np).expand(b, sq, np)
+        g = g.view(1, 1, np_q).expand(b, sq, np_q)
 
         # Compute beta: per-token, per-head write strength from value
         beta = self.beta_proj(v).squeeze(-1).sigmoid()
@@ -258,8 +266,8 @@ class GatedDeltaRuleAttention(MegatronModule):
         # Per-head RMSNorm on output
         output = self.out_norm(output)
 
-        # Transpose back: [b, sq, np, hn] -> [sq, b, np*hn]
+        # Transpose back: [b, sq, np_q, hn] -> [sq, b, np_q*hn]
         output = output.permute(1, 0, 2, 3).contiguous()
-        output = output.view(sq, b, np * hn)
+        output = output.view(sq, b, np_q * hn)
 
         return output
