@@ -263,6 +263,10 @@ class GatedDeltaRuleAttention(MegatronModule):
                 output_final_state=False,
             )
 
+        # Cast back to input dtype (naive impl computes in float32)
+        input_dtype = query.dtype
+        output = output.to(input_dtype)
+
         # Per-head RMSNorm on output
         output = self.out_norm(output)
 
