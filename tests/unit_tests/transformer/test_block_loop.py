@@ -867,3 +867,77 @@ class TestBlockLoopLinearAttention:
             gdr = layer_module.linear_core_attention
             assert gdr.A_log.grad is not None
             assert gdr.beta_proj.weight.grad is not None
+
+    def test_bf16_linear_attention_dtype(self):
+        """GDR output dtype must match input dtype (bf16), not float32."""
+        config = _make_config(
+            num_layers=1, block_loop_iterations=2, block_loop_linear_attention=True,
+            num_attention_heads=4, num_query_groups=2, hidden_size=16,
+        )
+        layer = _build_layer(config).cuda().bfloat16()
+        hidden_states, attention_mask = _make_inputs(config)
+        hidden_states = hidden_states.bfloat16()
+
+        output, _ = layer(
+            hidden_states=hidden_states, attention_mask=attention_mask,
+            block_loop_iteration=1,
+        )
+        assert output.dtype == torch.bfloat16, (
+            f"Expected bfloat16 output but got {output.dtype}"
+        )
+
+    def test_naive_fallback_bf16_gqa(self):
+        """Force naive (non-triton) path: bf16 + GQA must work.
+
+        This simulates the ROCm cluster where FLA triton kernels are
+        unavailable and only the inlined pure-PyTorch implementation runs.
+        """
+        import megatron.core.transformer.gated_delta_attention as gda_mod
+        saved = gda_mod.HAVE_FLA_TRITON
+        gda_mod.HAVE_FLA_TRITON = False
+        try:
+            config = _make_config(
+                num_layers=2, block_loop_iterations=2,
+                block_loop_linear_attention=True,
+                num_attention_heads=4, num_query_groups=2, hidden_size=16,
+                block_loop_embedding="per_layer",
+            )
+            block = _build_block(config).cuda().bfloat16()
+            hidden_states, attention_mask = _make_inputs(config)
+            hidden_states = hidden_states.bfloat16()
+
+            output = block(hidden_states=hidden_states, attention_mask=attention_mask)
+            assert output.dtype == torch.bfloat16, (
+                f"Naive fallback returned {output.dtype}, expected bfloat16"
+            )
+            loss = output.sum()
+            loss.backward()
+            for layer_module in block.layers:
+                gdr = layer_module.linear_core_attention
+                assert gdr.A_log.grad is not None
+                assert gdr.beta_proj.weight.grad is not None
+        finally:
+            gda_mod.HAVE_FLA_TRITON = saved
+
+    def test_naive_fallback_all_linear_bf16_gqa(self):
+        """Force naive path with all-linear + bf16 + GQA."""
+        import megatron.core.transformer.gated_delta_attention as gda_mod
+        saved = gda_mod.HAVE_FLA_TRITON
+        gda_mod.HAVE_FLA_TRITON = False
+        try:
+            config = _make_config(
+                num_layers=2, block_loop_iterations=2,
+                block_loop_all_linear_attention=True,
+                num_attention_heads=4, num_query_groups=2, hidden_size=16,
+                block_loop_embedding="per_layer",
+            )
+            block = _build_block(config).cuda().bfloat16()
+            hidden_states, attention_mask = _make_inputs(config)
+            hidden_states = hidden_states.bfloat16()
+
+            output = block(hidden_states=hidden_states, attention_mask=attention_mask)
+            assert output.dtype == torch.bfloat16
+            loss = output.sum()
+            loss.backward()
+        finally:
+            gda_mod.HAVE_FLA_TRITON = saved
