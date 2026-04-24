@@ -25,10 +25,26 @@ try:
     from fla.modules.l2norm import l2norm
 
     HAVE_FLA = True
-except ImportError:
-    chunk_gated_delta_rule = None
-    l2norm = None
-    HAVE_FLA = False
+    HAVE_FLA_TRITON = True
+except (ImportError, ValueError):
+    # ValueError: triton autotune incompatibility on ROCm/triton 3.1.0
+    HAVE_FLA_TRITON = False
+    try:
+        from fla.ops.gated_delta_rule.naive import naive_chunk_gated_delta_rule
+
+        chunk_gated_delta_rule = None
+        HAVE_FLA = True
+    except ImportError:
+        chunk_gated_delta_rule = None
+        naive_chunk_gated_delta_rule = None
+        HAVE_FLA = False
+
+# Pure-PyTorch l2norm fallback (avoid triton dependency)
+try:
+    from fla.modules.l2norm import l2norm
+except (ImportError, ValueError):
+    def l2norm(x):
+        return F.normalize(x, p=2, dim=-1)
 
 
 class GatedDeltaRuleAttention(MegatronModule):
@@ -122,17 +138,29 @@ class GatedDeltaRuleAttention(MegatronModule):
         # [b, sq, np, hn] -> [b, sq, np, 1] -> [b, sq, np]
         beta = self.beta_proj(v).squeeze(-1).sigmoid()
 
-        # Core GDR computation
-        output, _ = chunk_gated_delta_rule(
-            q.to(v.dtype),
-            k.to(v.dtype),
-            v,
-            g=g.to(v.dtype),
-            beta=beta.to(v.dtype),
-            initial_state=None,
-            output_final_state=False,
-            use_qk_l2norm_in_kernel=False,
-        )
+        # Core GDR computation: triton kernel if available, else naive chunk
+        if HAVE_FLA_TRITON:
+            output, _ = chunk_gated_delta_rule(
+                q.to(v.dtype),
+                k.to(v.dtype),
+                v,
+                g=g.to(v.dtype),
+                beta=beta.to(v.dtype),
+                initial_state=None,
+                output_final_state=False,
+                use_qk_l2norm_in_kernel=False,
+            )
+        else:
+            output, _ = naive_chunk_gated_delta_rule(
+                q.to(v.dtype),
+                k.to(v.dtype),
+                v,
+                g=g.to(v.dtype),
+                beta=beta.to(v.dtype),
+                chunk_size=64,
+                initial_state=None,
+                output_final_state=False,
+            )
 
         # Per-head RMSNorm on output
         output = self.out_norm(output)
