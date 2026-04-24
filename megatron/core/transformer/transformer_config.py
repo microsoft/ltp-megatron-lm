@@ -582,6 +582,12 @@ class TransformerConfig(ModelParallelConfig):
     standard single-pass softmax). Implies block_loop_linear_attention.
     Requires flash-linear-attention (FLA) library."""
 
+    block_loop_linear_checkpoint: bool = True
+    """Gradient-checkpoint the chunk loop inside naive GDR linear attention.
+    Saves ~62 GB for 20-layer 3BA500M but re-computes the loop body in
+    backward (moderate speed cost). Disable when GPU memory is sufficient
+    (e.g. all-linear architecture with no softmax overhead)."""
+
     ##################
     # Context Parallel
     ##################

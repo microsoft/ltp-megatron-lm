@@ -2707,6 +2707,11 @@ def _add_moe_args(parser):
     group.add_argument('--block-loop-all-linear-attention', action='store_true', default=False,
                        help='Use GDR linear attention on ALL passes (including pass 1). '
                        'Replaces softmax entirely. Implies --block-loop-linear-attention.')
+    group.add_argument('--block-loop-linear-checkpoint', action='store_true', dest='block_loop_linear_checkpoint',
+                       default=True,
+                       help='Gradient-checkpoint the chunk loop in naive GDR (saves memory, default on).')
+    group.add_argument('--no-block-loop-linear-checkpoint', action='store_false', dest='block_loop_linear_checkpoint',
+                       help='Disable gradient checkpointing in GDR (faster but uses more memory).')
 
     return parser
 

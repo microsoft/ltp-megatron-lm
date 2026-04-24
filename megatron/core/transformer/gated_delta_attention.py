@@ -67,11 +67,12 @@ def _naive_chunk_gated_delta_rule(
     scale: float = None,
     initial_state: Tensor = None,
     output_final_state: bool = False,
+    use_checkpoint: bool = True,
 ):
     """Pure-PyTorch chunked gated delta rule (adapted from FLA, MIT license).
 
     Memory-optimized: stays in input dtype (bf16), only uses float32 for
-    decay cumsum. Chunk loop uses gradient checkpointing.
+    decay cumsum. Chunk loop optionally uses gradient checkpointing.
 
     Args:
         q: [B, T, H, K]
@@ -145,13 +146,20 @@ def _naive_chunk_gated_delta_rule(
         torch.ones(BT, BT, dtype=torch.bool, device=q.device), diagonal=1
     )
     for i in range(0, l // BT):
-        o_i, S = torch.utils.checkpoint.checkpoint(
-            _chunk_loop_body,
-            q[:, :, i], k[:, :, i], v[:, :, i],
-            k_cumdecay[:, :, i], L_mask[:, :, i], decay[:, :, i],
-            S, mask2,
-            use_reentrant=False,
-        )
+        if use_checkpoint:
+            o_i, S = torch.utils.checkpoint.checkpoint(
+                _chunk_loop_body,
+                q[:, :, i], k[:, :, i], v[:, :, i],
+                k_cumdecay[:, :, i], L_mask[:, :, i], decay[:, :, i],
+                S, mask2,
+                use_reentrant=False,
+            )
+        else:
+            o_i, S = _chunk_loop_body(
+                q[:, :, i], k[:, :, i], v[:, :, i],
+                k_cumdecay[:, :, i], L_mask[:, :, i], decay[:, :, i],
+                S, mask2,
+            )
         o[:, :, i] = o_i
 
     if not output_final_state:
@@ -181,6 +189,8 @@ class GatedDeltaRuleAttention(MegatronModule):
         **kwargs,
     ):
         super().__init__(config=config)
+
+        self.use_checkpoint = getattr(config, 'block_loop_linear_checkpoint', True)
 
         self.layer_number = layer_number
         self.head_dim = config.kv_channels
@@ -274,8 +284,7 @@ class GatedDeltaRuleAttention(MegatronModule):
                 g=g.to(v.dtype),
                 beta=beta.to(v.dtype),
                 chunk_size=64,
-                initial_state=None,
-                output_final_state=False,
+                use_checkpoint=self.use_checkpoint,
             )
 
         # Cast back to input dtype (naive impl computes in float32)
