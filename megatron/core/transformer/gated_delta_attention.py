@@ -62,18 +62,63 @@ def _apply_triton_autotuner_patch():
         return False
 
 
-# Apply patch before importing FLA (decorator fires at import time).
-_apply_triton_autotuner_patch()
+def _import_fla_selective():
+    """Import only the FLA modules we need, bypassing fla.ops.__init__.py.
 
-# Try FLA triton kernel first (fastest); fall back to inlined pure-PyTorch.
-try:
+    FLA 0.5.0's fla/ops/__init__.py eagerly imports ALL operators including
+    parallel_attn which uses @torch.compile. On the ROCm cluster, upgrading
+    triton (3.1.0 -> 3.3.0) breaks torch._inductor's internal triton API
+    imports (AttrsDescriptor), causing ImportError through the @torch.compile
+    chain.
+
+    We only need chunk_gated_delta_rule and l2norm. This function pre-populates
+    sys.modules with stub packages for fla, fla.ops, and fla.modules, so Python
+    skips their __init__.py and only loads the specific submodules we import.
+    """
+    import importlib.util
+    import os
+    import sys
+    import types
+
+    fla_spec = importlib.util.find_spec('fla')
+    if fla_spec is None:
+        raise ImportError("fla not installed")
+    fla_path = fla_spec.submodule_search_locations[0]
+
+    # Create stub packages to prevent eager __init__.py execution
+    for pkg_name, rel_path in [
+        ('fla', ''),
+        ('fla.ops', 'ops'),
+        ('fla.modules', 'modules'),
+    ]:
+        if pkg_name not in sys.modules:
+            mod = types.ModuleType(pkg_name)
+            mod.__path__ = [os.path.join(fla_path, rel_path) if rel_path else fla_path]
+            mod.__package__ = pkg_name
+            sys.modules[pkg_name] = mod
+
     from fla.ops.gated_delta_rule import chunk_gated_delta_rule
     from fla.modules.l2norm import l2norm
+    return chunk_gated_delta_rule, l2norm
 
+
+# Apply autotuner patch before importing FLA (decorator fires at import time).
+_apply_triton_autotuner_patch()
+
+# Try FLA triton kernel: selective import to avoid torch.compile/inductor chain.
+# Falls back to standard import, then to inlined pure-PyTorch.
+try:
+    chunk_gated_delta_rule, l2norm = _import_fla_selective()
     HAVE_FLA_TRITON = True
-except (ImportError, ValueError, Exception):
-    HAVE_FLA_TRITON = False
-    chunk_gated_delta_rule = None
+except Exception:
+    try:
+        # Standard import as fallback (works on CUDA with compatible triton)
+        from fla.ops.gated_delta_rule import chunk_gated_delta_rule
+        from fla.modules.l2norm import l2norm
+        HAVE_FLA_TRITON = True
+    except (ImportError, ValueError, Exception):
+        HAVE_FLA_TRITON = False
+        chunk_gated_delta_rule = None
 
 
 def _l2norm(x: Tensor) -> Tensor:
