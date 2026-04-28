@@ -941,3 +941,30 @@ class TestBlockLoopLinearAttention:
             loss.backward()
         finally:
             gda_mod.HAVE_FLA_TRITON = saved
+
+    def test_all_linear_n1_uses_gdr(self):
+        """all_linear_attention=True with N=1 must use GDR on the standard path.
+
+        Verifies that the standard path (block_loop_iteration=None) swaps in
+        GDR when all_linear_attention is set, enabling a pure linear attention
+        baseline without any loop.
+        """
+        config = _make_config(
+            num_layers=2, block_loop_iterations=1,
+            block_loop_all_linear_attention=True,
+            num_attention_heads=4, num_query_groups=2, hidden_size=16,
+        )
+        block = _build_block(config).cuda()
+        hidden_states, attention_mask = _make_inputs(config)
+
+        output = block(hidden_states=hidden_states, attention_mask=attention_mask)
+        assert output.shape == hidden_states.shape
+
+        # Verify GDR parameters receive gradients (proves GDR was used)
+        loss = output.sum()
+        loss.backward()
+        for layer_module in block.layers:
+            gdr = layer_module.linear_core_attention
+            assert gdr is not None, "GDR module should be created"
+            assert gdr.A_log.grad is not None, "GDR A_log should receive gradients"
+            assert gdr.beta_proj.weight.grad is not None, "GDR beta_proj should receive gradients"

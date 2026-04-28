@@ -380,20 +380,26 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
             else:
                 self.block_loop_gate = None
 
-            # Block loop linear attention (GDR) for pass 2+ (or all passes)
-            if config.block_loop_linear_attention or config.block_loop_all_linear_attention:
-                from megatron.core.transformer.gated_delta_attention import (
-                    GatedDeltaRuleAttention,
-                )
+        # Linear attention (GDR) initialization:
+        # - block_loop_linear_attention: only needed for N>1 (pass 2+ uses GDR)
+        # - block_loop_all_linear_attention: needed for any N (all passes use GDR, including N=1 baseline)
+        need_linear_attn = (
+            (config.block_loop_linear_attention and self.block_loop_iterations > 1)
+            or config.block_loop_all_linear_attention
+        )
+        if need_linear_attn:
+            from megatron.core.transformer.gated_delta_attention import (
+                GatedDeltaRuleAttention,
+            )
 
-                self.linear_core_attention = GatedDeltaRuleAttention(
-                    config=config,
-                    layer_number=self.layer_number,
-                )
-                self.all_linear_attention = config.block_loop_all_linear_attention
-            else:
-                self.linear_core_attention = None
-                self.all_linear_attention = False
+            self.linear_core_attention = GatedDeltaRuleAttention(
+                config=config,
+                layer_number=self.layer_number,
+            )
+            self.all_linear_attention = config.block_loop_all_linear_attention
+        else:
+            self.linear_core_attention = None
+            self.all_linear_attention = False
 
         # Per-layer learnable bias (independent of block loop)
         if config.layer_learnable_bias:
@@ -457,9 +463,15 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
                     kwargs['hidden_states'] = hidden_states
                 else:
                     args = (hidden_states,) + args[1:]
+            # all-linear attention: use GDR even on standard (N=1) path
+            if self.all_linear_attention and self.linear_core_attention is not None:
+                saved_core_attn = self.self_attention.core_attention
+                self.self_attention.core_attention = self.linear_core_attention
             pre_mlp_layernorm_output, residual, context = self._forward_attention(
                 *args, **kwargs
             )
+            if self.all_linear_attention and self.linear_core_attention is not None:
+                self.self_attention.core_attention = saved_core_attn
             output = self._forward_mlp(pre_mlp_layernorm_output, residual)
             return output, context
 
