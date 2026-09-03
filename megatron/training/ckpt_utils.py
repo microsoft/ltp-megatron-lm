@@ -128,7 +128,7 @@ class CkptUploadQueue:
         include_path = ";".join(upload_paths)
         blob_url = f"{self.blob_path}?{self.read_blob_sas_token()}"
         command = f"{self.azcopy_command} '{self.local_dir}' '{blob_url}' --include-path '{include_path}'"
-        print(f"Checkpoint upload started: {command}")
+        print(f"Checkpoint upload started for {include_path}.")
         proc = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
