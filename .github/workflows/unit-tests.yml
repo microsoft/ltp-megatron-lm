@@ -29,7 +29,7 @@ jobs:
       fail-fast: true
     steps:
       - name: Checkout target branch
-        uses: actions/checkout@v3
+        uses: actions/checkout@a37ce9120846195fa4ece8f58b268e6043cb2f26 # v3.7.0
       - name: Test target branch
         run: |
           bash ${LTP_RUN_CI_SCRIPT_PATH} unit-tests-nvidia-h200-1n8g
@@ -43,7 +43,7 @@ jobs:
       fail-fast: true
     steps:
       - name: Checkout target branch
-        uses: actions/checkout@v3
+        uses: actions/checkout@a37ce9120846195fa4ece8f58b268e6043cb2f26 # v3.7.0
       - name: Test target branch
         run: |
           bash ${LTP_RUN_CI_SCRIPT_PATH} unit-tests-amd-mi300x-1n8g
